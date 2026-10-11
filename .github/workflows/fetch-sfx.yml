@@ -1,0 +1,35 @@
+name: Fetch sound packs
+
+# One-off helper: downloads CC0 Kenney sound packs and uploads them as a build
+# artifact, since the dev container can't reach kenney.nl. The sounds the game
+# uses are picked from the artifact and committed to public/sfx by hand.
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/fetch-sfx.yml']
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packs
+        run: |
+          set -uo pipefail
+          mkdir -p packs
+          for slug in impact-sounds interface-sounds rpg-audio sci-fi-sounds digital-audio ui-audio casino-audio; do
+            page=$(curl -fsL -A "Mozilla/5.0" "https://kenney.nl/assets/$slug" || true)
+            zip=$(echo "$page" | grep -oE 'https://kenney.nl/media/pages/assets/[^"]+\.zip' | head -1)
+            echo "$slug -> $zip"
+            if [ -n "$zip" ]; then
+              curl -fsL -A "Mozilla/5.0" -o "packs/$slug.zip" "$zip" && unzip -q -o "packs/$slug.zip" -d "packs/$slug" && rm "packs/$slug.zip"
+            fi
+          done
+          find packs -type f | sed 's|^packs/||' | sort > packs/LISTING.txt
+          wc -l packs/LISTING.txt
+          du -sh packs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kenney-packs
+          path: packs
+          retention-days: 3
