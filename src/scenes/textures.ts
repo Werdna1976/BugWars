@@ -4,6 +4,7 @@ import {
   FieldInfo, drawBee, drawBlast, drawFlag, drawGlob, drawGround, drawNest, drawOutpost, drawRing, drawRubble,
   drawSeed, drawShard, drawSoftDot, drawSpark, drawSunflower, drawWater, leaf,
 } from '../art/scenery';
+import { drawCardFrame, drawNectarDrop, drawPanelBg, drawPlanks } from '../art/ui';
 
 // Bakes all the procedural art (src/art) into Phaser textures once at boot.
 // Bugs get a sprite sheet `<id>_anim` (walk frames, then strike frames) and a
@@ -107,4 +108,14 @@ export function bakeTextures(scene: Phaser.Scene, field: FieldInfo) {
   });
   canvasTexture(scene, 'floatleaf', 30 * HI, 30 * HI, (ctx) => leaf(ctx, 15 * HI, 15 * HI, 22 * HI, 0.3, '#c8742a'));
   canvasTexture(scene, 'floatleaf2', 30 * HI, 30 * HI, (ctx) => leaf(ctx, 15 * HI, 15 * HI, 18 * HI, -0.2, '#7a9a30'));
+}
+
+// Interface textures, sized by the scene's layout.
+export function bakeUi(scene: Phaser.Scene, size: { cardW: number; cardH: number; sideW: number; height: number; panelW: number; panelH: number }) {
+  canvasTexture(scene, 'card', size.cardW * HI, size.cardH * HI, (ctx) => drawCardFrame(ctx, size.cardW * HI, size.cardH * HI, false));
+  canvasTexture(scene, 'card_sel', size.cardW * HI, size.cardH * HI, (ctx) => drawCardFrame(ctx, size.cardW * HI, size.cardH * HI, true));
+  canvasTexture(scene, 'drop', 40 * HI, 40 * HI, (ctx) => drawNectarDrop(ctx, 40 * HI));
+  canvasTexture(scene, 'panel_left', size.sideW, size.height, (ctx) => drawPanelBg(ctx, size.sideW, size.height, '#1f2c19', 5));
+  canvasTexture(scene, 'panel_right', size.sideW, size.height, (ctx) => drawPanelBg(ctx, size.sideW, size.height, '#2a1d1b', 6));
+  canvasTexture(scene, 'planks', size.panelW, size.panelH, (ctx) => drawPlanks(ctx, size.panelW, size.panelH));
 }

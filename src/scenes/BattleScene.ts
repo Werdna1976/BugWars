@@ -5,7 +5,7 @@ import { SimpleAi } from '../sim/ai';
 import { HAND_SIZE, NECTAR } from '../sim/player';
 import { CARDS, CardDef } from '../data/cards';
 import { AI_DECK } from '../data/decks';
-import { BUG_FRAMES, HI, TILE, bakeTextures, bugScale, iconScale } from './textures';
+import { BUG_FRAMES, HI, TILE, bakeTextures, bakeUi, bugScale, iconScale } from './textures';
 import { WALK_FRAMES } from '../art/bugs';
 import { FieldInfo, waterSpots } from '../art/scenery';
 import { sfx } from '../audio/sfx';
@@ -56,7 +56,7 @@ const LANES = [3.5, COLS - 3.5];
 
 interface CardView {
   container: Phaser.GameObjects.Container;
-  bg: Phaser.GameObjects.Rectangle;
+  bg: Phaser.GameObjects.Image;
   icon: Phaser.GameObjects.Image;
   name: Phaser.GameObjects.Text;
   cost: Phaser.GameObjects.Text;
@@ -100,7 +100,10 @@ export class BattleScene extends Phaser.Scene {
 
   create() {
     this.world = new World(Math.floor(Math.random() * 1e9));
-    if (!this.textures.exists('ground')) bakeTextures(this, this.fieldInfo());
+    if (!this.textures.exists('ground')) {
+      bakeTextures(this, this.fieldInfo());
+      bakeUi(this, { cardW: CARD_W, cardH: CARD_H, sideW: SIDE_W, height: ARENA_H + PANEL_H, panelW: ARENA_W, panelH: PANEL_H });
+    }
     this.ai = new SimpleAi(this.world, 'enemy');
     this.announced.clear();
     this.acc = 0;
@@ -212,7 +215,7 @@ export class BattleScene extends Phaser.Scene {
 
   private drawPanel() {
     const y0 = ARENA_H;
-    this.add.rectangle(ARENA_W / 2, y0 + PANEL_H / 2, ARENA_W, PANEL_H, 0x2a3b22).setDepth(300);
+    this.add.image(0, y0, 'planks').setOrigin(0, 0).setDepth(300);
     this.nectarBar = this.add.graphics().setDepth(301);
     this.nectarText = this.add.text(14, y0 + 10, '', {
       fontFamily: FONT, fontSize: '18px', color: '#ffe9a8', fontStyle: 'bold',
@@ -221,16 +224,16 @@ export class BattleScene extends Phaser.Scene {
     for (let i = 0; i < HAND_SIZE; i++) {
       const x = 10 + i * (CARD_W + CARD_GAP) + CARD_W / 2;
       const container = this.add.container(x, CARD_Y + CARD_H / 2).setDepth(310);
-      const bg = this.add.rectangle(0, 0, CARD_W, CARD_H, 0x4a6a3a).setStrokeStyle(3, 0x1d2a17);
-      const icon = this.add.image(0, -18, 'pillbug');
-      const name = this.add.text(0, 40, '', {
-        fontFamily: FONT, fontSize: '13px', color: '#ffffff', align: 'center', wordWrap: { width: CARD_W - 8 },
+      const bg = this.add.image(0, 0, 'card').setScale(1 / HI);
+      const icon = this.add.image(0, -22, 'pillbug');
+      const name = this.add.text(0, CARD_H / 2 - 25, '', {
+        fontFamily: FONT, fontSize: '13px', color: '#ffffff', fontStyle: 'bold', align: 'center', wordWrap: { width: CARD_W - 16 },
       }).setOrigin(0.5);
-      const badge = this.add.circle(-CARD_W / 2 + 16, -CARD_H / 2 + 16, 14, 0x8a4fd8).setStrokeStyle(2, 0xffe9a8);
-      const cost = this.add.text(-CARD_W / 2 + 16, -CARD_H / 2 + 16, '', {
-        fontFamily: FONT, fontSize: '15px', color: '#ffffff', fontStyle: 'bold',
+      const badge = this.add.image(-CARD_W / 2 + 14, -CARD_H / 2 + 14, 'drop').setScale(0.85 / HI);
+      const cost = this.add.text(-CARD_W / 2 + 14, -CARD_H / 2 + 17, '', {
+        fontFamily: FONT, fontSize: '16px', color: '#3a1a00', fontStyle: 'bold',
       }).setOrigin(0.5);
-      const shade = this.add.rectangle(0, 0, CARD_W, CARD_H, 0x000000, 0.5).setOrigin(0.5, 1).setPosition(0, CARD_H / 2);
+      const shade = this.add.rectangle(0, 0, CARD_W - 8, CARD_H - 8, 0x000000, 0.5).setOrigin(0.5, 1).setPosition(0, CARD_H / 2 - 4);
       container.add([bg, icon, name, shade, badge, cost]);
       container.setSize(CARD_W, CARD_H).setInteractive({ useHandCursor: true });
       container.on('pointerover', () => this.setHover(i));
@@ -251,10 +254,10 @@ export class BattleScene extends Phaser.Scene {
 
     const nx = 10 + HAND_SIZE * (CARD_W + CARD_GAP) + 50;
     this.add.text(nx, CARD_Y + 4, 'Next', { fontFamily: FONT, fontSize: '13px', color: '#c9d8b8' }).setOrigin(0.5, 0).setDepth(310);
-    this.add.rectangle(nx, CARD_Y + 66, 70, 90, 0x3a5230).setStrokeStyle(2, 0x1d2a17).setDepth(310);
+    this.add.image(nx, CARD_Y + 66, 'card').setDisplaySize(70, 96).setDepth(310);
     this.nextCard = {
-      icon: this.add.image(nx, CARD_Y + 70, 'pillbug').setDepth(311),
-      cost: this.add.text(nx, CARD_Y + 120, '', { fontFamily: FONT, fontSize: '13px', color: '#ffe9a8' }).setOrigin(0.5).setDepth(311),
+      icon: this.add.image(nx, CARD_Y + 58, 'pillbug').setDepth(311),
+      cost: this.add.text(nx, CARD_Y + 99, '', { fontFamily: FONT, fontSize: '12px', color: '#ffe9a8' }).setOrigin(0.5).setDepth(311),
     };
     this.refreshCards();
   }
@@ -270,7 +273,7 @@ export class BattleScene extends Phaser.Scene {
         view.cost.setText(String(card.cost));
       }
       const chosen = this.selected === i;
-      view.bg.setStrokeStyle(3, chosen ? 0xf2c12e : 0x1d2a17);
+      view.bg.setTexture(chosen ? 'card_sel' : 'card');
       view.container.setY(CARD_Y + CARD_H / 2 - (chosen ? 8 : 0));
     });
     const next = CARDS[me.queue[0]];
@@ -288,18 +291,23 @@ export class BattleScene extends Phaser.Scene {
     const w = ARENA_W - x0 - 14;
     const seg = w / NECTAR.cap;
     const g = this.nectarBar.clear();
-    g.fillStyle(0x16210f, 1).fillRoundedRect(x0 - 2, y - 2, w + 4, 24, 6);
+    g.fillStyle(0x1a0e04, 1).fillRoundedRect(x0 - 3, y - 3, w + 6, 26, 8);
+    g.fillStyle(0x3a2410, 1).fillRoundedRect(x0, y, w, 20, 6);
     const full = Math.floor(me.nectar);
-    g.fillStyle(0xd9a521, 1).fillRect(x0, y, seg * full, 20);
-    g.fillStyle(0xd9a521, 0.45).fillRect(x0 + seg * full, y, seg * (me.nectar - full), 20);
-    g.lineStyle(1, 0x16210f, 0.9);
-    for (let i = 1; i < NECTAR.cap; i++) g.lineBetween(x0 + i * seg, y, x0 + i * seg, y + 20);
+    // Honey fill with a lighter top band, and the charging cell half-filled.
+    if (full > 0) {
+      g.fillStyle(0xe8a614, 1).fillRoundedRect(x0, y, seg * full, 20, 6);
+      g.fillStyle(0xffd860, 0.75).fillRoundedRect(x0 + 2, y + 2, seg * full - 4, 6, 3);
+    }
+    g.fillStyle(0xe8a614, 0.4).fillRect(x0 + seg * full, y, seg * (me.nectar - full), 20);
+    g.lineStyle(2, 0x1a0e04, 0.8);
+    for (let i = 1; i < NECTAR.cap; i++) g.lineBetween(x0 + i * seg, y + 1, x0 + i * seg, y + 19);
     this.nectarText.setText(`Nectar ${full}/${NECTAR.cap}`);
 
     this.cards.forEach((view, i) => {
       const cost = CARDS[me.hand[i]].cost;
       const missing = Math.max(0, 1 - me.nectar / cost);
-      view.shade.setVisible(missing > 0).setDisplaySize(CARD_W, CARD_H * missing);
+      view.shade.setVisible(missing > 0).setDisplaySize(CARD_W - 8, (CARD_H - 8) * missing);
     });
   }
 
@@ -320,7 +328,7 @@ export class BattleScene extends Phaser.Scene {
 
     // Left: the card you're hovering or holding, shown large.
     const lx = -SIDE_W;
-    this.add.rectangle(lx, 0, SIDE_W, h, 0x1f2c19).setOrigin(0, 0).setDepth(300);
+    this.add.image(lx, 0, 'panel_left').setOrigin(0, 0).setDepth(300);
     this.add.rectangle(-1, 0, 2, h, 0x0f160c).setOrigin(0, 0).setDepth(301);
     header(lx + pad, 'YOUR CARD', '#b3d1ff');
     this.yourHint = this.add.text(lx + pad, 50, 'Hover over a card in your hand (or tap it) to see what it does.', {
@@ -353,7 +361,7 @@ export class BattleScene extends Phaser.Scene {
 
     // Right: the AI's deck. Hover a row to read about that bug.
     const rx = ARENA_W;
-    this.add.rectangle(rx, 0, SIDE_W, h, 0x2a1d1b).setOrigin(0, 0).setDepth(300);
+    this.add.image(rx, 0, 'panel_right').setOrigin(0, 0).setDepth(300);
     this.add.rectangle(rx - 1, 0, 2, h, 0x160d0c).setOrigin(0, 0).setDepth(301);
     header(rx + pad, `AI DECK: ${AI_DECK.name.toUpperCase()}`, '#ffb3b5');
     const counts = new Map<string, number>();
