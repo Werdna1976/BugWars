@@ -212,7 +212,6 @@ const rhino: BugArt = {
       ctx.moveTo(10, -2.5);
       ctx.quadraticCurveTo(26, -5, 36, -14);
       ctx.stroke();
-      taper(ctx, [[2, 0], [8, 6], [12, 11]], 5, 1.5, '#2e140a', 1.2);
     });
     // Second, shorter horn on the thorax.
     taper(ctx, [[26, -3], [34, -6], [38, -7]], 6, 1.5, '#2e140a', 1.2);
@@ -321,45 +320,52 @@ const mantis: BugArt = {
     ctx.lineTo(-46, 0);
     ctx.stroke();
     // Long prothorax.
-    taper(ctx, [[0, 0], [14, 0], [26, 0]], 8, 5, green, 1.5);
-    // Raptorial forelegs: folded when resting, flung forward on a strike.
+    taper(ctx, [[0, 0], [16, 0], [34, 0]], 8, 5, green, 1.5);
+    // Triangle head with big bulging eyes at the corners.
+    const hx = 40 + strike * 4;
+    poly(ctx, [[hx - 5, -10], [hx - 5, 10], [hx + 9, 0]], '#8fd24e', 1.5);
+    for (const s of [-1, 1]) {
+      blob(ctx, hx - 4, s * 9.5, 4.6, 4.6, '#6aa832', { gloss: 0.6, outline: 1.5 });
+      ellipsePath(ctx, hx - 3.4, s * 9.5, 1.3, 1.6);
+      ctx.fillStyle = '#1a2a08'; // the "pupil" a mantis seems to look at you with
+      ctx.fill();
+    }
+    antennae(ctx, hx + 4, 0, 16, '#4e8a26', walk, { width: 1.2 });
+    // Raptorial forelegs: folded beside the neck at rest, flung forward on a strike.
     for (const s of [-1, 1]) {
       const e = strike;
-      const elbow: Pt = [22 + e * 10, s * (11 - e * 3)];
-      const hand: Pt = [elbow[0] + 12 + e * 16, s * (6 - e * 2)];
-      const hook: Pt = [hand[0] - 9 + e * 8, s * (2 + e)];
-      taper(ctx, [[22, s * 3], elbow], 6, 5, green, 1.5);
-      taper(ctx, [elbow, hand], 5, 3, '#93d652', 1.5);
-      taper(ctx, [hand, hook], 3, 1.4, '#c8f08a', 1.2);
-      for (let k = 0.3; k < 1; k += 0.25) {
-        const px = elbow[0] + (hand[0] - elbow[0]) * k;
-        const py = elbow[1] + (hand[1] - elbow[1]) * k;
-        limb(ctx, [[px, py], [px - 1, py - s * 3]], 1, '#2e5a12', 0);
+      const coxa: Pt = [24, s * 3];
+      const knee: Pt = [34 + e * 12, s * (12 - e * 4)];
+      const tip: Pt = [knee[0] - 14 + e * 28, s * (8 - e * 5)];
+      taper(ctx, [coxa, knee], 6, 5, green, 1.5);
+      taper(ctx, [knee, tip], 4.5, 2, '#a6e060', 1.4);
+      for (let k = 0.25; k < 1; k += 0.25) {
+        const px = coxa[0] + (knee[0] - coxa[0]) * k;
+        const py = coxa[1] + (knee[1] - coxa[1]) * k;
+        limb(ctx, [[px, py], [px + 1, py - s * 3.2]], 1.1, '#2e5a12', 0);
       }
     }
-    // Triangle head with bulging eyes.
-    const hx = 32 + strike * 3;
-    poly(ctx, [[hx - 4, -9], [hx - 4, 9], [hx + 9, 0]], '#8fd24e', 1.5);
-    for (const s of [-1, 1]) blob(ctx, hx - 3, s * 8, 4, 4, '#5a8a2a', { gloss: 0.6, outline: 1.5 });
-    glint(ctx, hx - 4, -9, 2, 1.5, 0.9);
-    glint(ctx, hx - 4, 7, 2, 1.5, 0.9);
-    antennae(ctx, hx + 2, 0, 14, '#4e8a26', walk, { width: 1.2 });
   },
 };
 
 // Spitting spider: domed tan carapace with leopard spots, banded legs.
 // Rears up and gathers a glob of spit to fire.
 function spiderLegs(ctx: Ctx, cx: number, half: number, len: number, width: number, color: string, band: string, walk: number) {
-  const angles = [0.55, 1.15, 1.85, 2.5];
+  const angles = [0.5, 1.1, 1.85, 2.5];
+  const bend = [0.55, 0.3, -0.3, -0.55]; // front legs reach forward, back legs trail
   for (const s of [-1, 1]) {
     angles.forEach((ang, i) => {
       const phase = (i % 2 === 0) === (s === 1) ? 0 : 0.5;
-      const sw = Math.sin(TAU * (walk + phase)) * len * 0.18;
-      const knee: Pt = [cx + Math.cos(ang) * len * 0.5 + sw * 0.3, s * (half + Math.sin(ang) * len * 0.7)];
-      const foot: Pt = [cx + Math.cos(ang) * len * 1.05 + sw, s * (half + Math.sin(ang) * len * 0.6)];
-      limb(ctx, [[cx, s * half * 0.5], knee, foot], width, color, 2);
-      // Pale band at each knee.
-      limb(ctx, [[knee[0] - 1, knee[1]], [knee[0] + 1, knee[1]]], width + 0.5, band, 0);
+      const sw = Math.sin(TAU * (walk + phase)) * 0.16;
+      const a = ang - sw;
+      const base: Pt = [cx + Math.cos(a) * half * 0.6, s * Math.sin(a) * half];
+      const knee: Pt = [base[0] + Math.cos(a) * len * 0.5, base[1] + s * (Math.sin(a) * len * 0.5 + len * 0.18)];
+      const fa = a - bend[i];
+      const foot: Pt = [knee[0] + Math.cos(fa) * len * 0.62, knee[1] + s * Math.sin(fa) * len * 0.62];
+      const mid: Pt = [(knee[0] + foot[0]) / 2, (knee[1] + foot[1]) / 2];
+      limb(ctx, [base, knee, mid, foot], width, color, 2);
+      limb(ctx, [knee, [knee[0] + (mid[0] - knee[0]) * 0.25, knee[1] + (mid[1] - knee[1]) * 0.25]], width * 0.9, band, 0);
+      limb(ctx, [mid, [mid[0] + (foot[0] - mid[0]) * 0.2, mid[1] + (foot[1] - mid[1]) * 0.2]], width * 0.8, band, 0);
     });
   }
 }
@@ -367,7 +373,7 @@ function spiderLegs(ctx: Ctx, cx: number, half: number, len: number, width: numb
 const spitter: BugArt = {
   frame: 112, body: 62,
   draw(ctx, { walk, strike }) {
-    spiderLegs(ctx, 6, 6, 30, 2.6, '#7a5a34', '#e8d0a0', walk);
+    spiderLegs(ctx, 8, 10, 30, 2.4, '#5a3e22', '#a88458', walk);
     blob(ctx, -16, 0, 12, 10, '#a08050', { gloss: 0.3 });
     // Big domed carapace, larger than the abdomen (the giveaway for this spider).
     const rear = 1 + strike * 0.12;
@@ -613,7 +619,7 @@ const bombardier: BugArt = {
 const bolas: BugArt = {
   frame: 128, body: 64,
   draw(ctx, { walk, strike }) {
-    spiderLegs(ctx, 10, 5, 22, 2.8, '#8a6a48', '#f0dcb0', walk);
+    spiderLegs(ctx, 14, 8, 24, 2.6, '#6a4a30', '#c8a478', walk);
     blob(ctx, -10, 0, 22, 21, '#efe0b8', { gloss: 0.35, dark: 0.3 });
     ctx.save();
     ellipsePath(ctx, -10, 0, 22, 21);

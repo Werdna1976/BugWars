@@ -10,15 +10,16 @@ for (const [id, art] of Object.entries(BUG_ART)) {
   label.textContent = id;
   out.appendChild(label);
   const c = document.createElement('canvas');
-  const scale = 96 / art.frame;
-  c.width = frames * 96 + 200;
-  c.height = 96;
+  const cell = Number(new URLSearchParams(location.search).get('cell') ?? 96);
+  const scale = cell / art.frame;
+  c.width = frames * cell + 200;
+  c.height = cell;
   const ctx = c.getContext('2d')!;
   ctx.fillStyle = '#6b4e32';
   ctx.fillRect(0, 0, c.width, c.height);
   for (let i = 0; i < frames; i++) {
     ctx.save();
-    ctx.translate(i * 96, 0);
+    ctx.translate(i * cell, 0);
     ctx.scale(scale, scale);
     drawBugFrame(ctx, art, i);
     ctx.restore();
@@ -28,8 +29,8 @@ for (const [id, art] of Object.entries(BUG_ART)) {
   small.width = art.frame;
   small.height = art.frame;
   drawBugFrame(small.getContext('2d')!, art, 0);
-  ctx.drawImage(small, frames * 96 + 20, 28, 40, 40);
-  ctx.drawImage(small, frames * 96 + 80, 18, 60, 60);
+  ctx.drawImage(small, frames * cell + 20, 28, 40, 40);
+  ctx.drawImage(small, frames * cell + 80, 18, 60, 60);
   out.appendChild(c);
 }
 
