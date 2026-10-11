@@ -169,16 +169,34 @@ describe('match flow', () => {
 });
 
 describe('towers', () => {
-  it('the Nest sleeps through an Outpost loss and wakes in overtime', () => {
+  it('the Nest wakes when one of its Outposts falls', () => {
     const w = new World(1);
     const nest = w.towers.find((t) => t.side === 'enemy' && t.role === 'nest')!;
-    w.towers.find((t) => t.side === 'enemy' && t.role === 'outpost')!.hp = 0;
-    w.towers.find((t) => t.side === 'player' && t.role === 'outpost')!.hp = 0;
     w.step();
     expect(nest.active).toBe(false);
+    w.towers.find((t) => t.side === 'enemy' && t.role === 'outpost')!.hp = 0;
+    w.step();
+    expect(nest.active).toBe(true);
+  });
+
+  it('a sleeping Nest wakes in overtime', () => {
+    const w = new World(1);
+    const nest = w.towers.find((t) => t.side === 'enemy' && t.role === 'nest')!;
     for (let i = 0; i < 20 * 181 && w.phase === 'regulation'; i++) w.step();
     expect(w.phase).toBe('overtime');
     expect(nest.active).toBe(true);
+  });
+
+  it('knocking down an Outpost opens a deploy pocket on that side only', () => {
+    const w = new World(1);
+    expect(w.canDeploy('player', 3.5, 8.5, false)).toBe(false);
+    w.towers.find((t) => t.side === 'enemy' && t.role === 'outpost' && t.x < 9)!.hp = 0;
+    w.step();
+    expect(w.canDeploy('player', 3.5, 8.5, false)).toBe(true);
+    expect(w.canDeploy('player', 3.5, 4.5, false)).toBe(true); // where the Outpost stood
+    expect(w.canDeploy('player', 3.5, 2.5, false)).toBe(false); // not right up to the back wall
+    expect(w.canDeploy('player', 14.5, 8.5, false)).toBe(false); // other lane still closed
+    expect(w.canDeploy('enemy', 3.5, 24.5, false)).toBe(false);
   });
 
   // Andrew's benchmark: alone and undefended, a big tank badly hurts an Outpost,
@@ -234,8 +252,9 @@ describe('new units', () => {
     const w = new World(1);
     const dung = w.spawnUnit('player', { ...CARDS.dung.unit, hp: 100000 }, 3.5, 19);
     w.spawnUnit('enemy', { ...CARDS.mantis.unit, hp: 100000 }, 3.5, 13);
-    for (let i = 0; i < 20 * 40; i++) w.step();
-    expect(w.byId(dung.targetId)?.kind).toBe('tower');
-    expect(dung.attacking).toBe(true);
+    const outpost = w.towers.find((t) => t.side === 'enemy' && t.role === 'outpost' && t.x < 9)!;
+    for (let i = 0; i < 20 * 40 && outpost.hp === outpost.maxHp; i++) w.step();
+    expect(outpost.hp).toBeLessThan(outpost.maxHp);
+    expect(w.byId(dung.targetId)).toBe(outpost);
   });
 });

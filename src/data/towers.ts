@@ -13,9 +13,13 @@ export interface TowerStats {
 // Rows between the back wall and each Outpost. Larger = further from the puddles.
 export const OUTPOST_ROW = 3;
 
-// The Nest sleeps until it takes damage or overtime starts. Flip this to also
-// wake it when one of its Outposts falls (the Clash Royale rule).
-export const NEST_WAKES_ON_OUTPOST_LOSS = false;
+// The Nest sleeps until it takes damage, one of its Outposts falls (the Clash
+// Royale rule), or overtime starts.
+export const NEST_WAKES_ON_OUTPOST_LOSS = true;
+
+// Knocking down an Outpost lets the winner deploy on that side of the enemy
+// half, down to this many rows from the enemy's back wall.
+export const POCKET_DEPTH = OUTPOST_ROW + 1;
 
 export const NEST: TowerStats = {
   name: 'Nest',

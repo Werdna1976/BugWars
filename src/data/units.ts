@@ -13,6 +13,7 @@ export interface UnitStats {
   speed: number;
   sight: number;
   radius: number;
+  mass: number; // heavier bugs shove lighter ones aside
   flying: boolean;
   targets: TargetRule;
   prefersAir?: boolean; // picks flyers over closer ground targets
@@ -27,10 +28,10 @@ export const MELEE = 0.3;
 export const TEST_UNITS: Record<string, UnitStats> = {
   beetle: {
     id: 'beetle', name: 'Test Beetle', hp: 700, damage: 90, hitSpeed: 1.2, range: MELEE,
-    speed: SPEED.medium, sight: 5.5, radius: 0.45, flying: false, targets: 'ground',
+    speed: SPEED.medium, sight: 5.5, radius: 0.45, mass: 4, flying: false, targets: 'ground',
   },
   wasp: {
     id: 'wasp', name: 'Test Wasp', hp: 320, damage: 60, hitSpeed: 1.0, range: MELEE,
-    speed: SPEED.fast, sight: 5.5, radius: 0.4, flying: true, targets: 'both',
+    speed: SPEED.fast, sight: 5.5, radius: 0.4, mass: 3, flying: true, targets: 'both',
   },
 };

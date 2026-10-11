@@ -127,7 +127,10 @@ export class SimpleAi {
     const pick = tank ?? this.affordable().sort((a, b) => b.card.cost - a.card.cost)[0];
     if (!pick) return false;
     // Tanks start a little back so support can catch up; others go near the crossing.
-    const depth = tank ? ROWS / 2 - 5 : ROWS / 2 - 3;
+    // With an enemy Outpost down, drop straight into the pocket past the puddles.
+    const pocketDepth = ROWS / 2 + 3;
+    const pocket = this.world.inDeployZone(this.side, Math.floor(LANE_X[lane]), Math.floor(this.y(pocketDepth)));
+    const depth = pocket ? pocketDepth : tank ? ROWS / 2 - 5 : ROWS / 2 - 3;
     if (!this.play(pick.i, LANE_X[lane] + (this.world.rng() - 0.5), this.y(depth))) return false;
     this.push = { lane, until: now + 10 };
     return true;

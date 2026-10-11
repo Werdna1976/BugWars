@@ -1,6 +1,6 @@
 import { Arena, Tile } from './arena';
 import { COLS, DT, ROWS, Side, otherSide } from './constants';
-import { NEST, NEST_WAKES_ON_OUTPOST_LOSS, OUTPOST, OUTPOST_ROW, TowerStats } from '../data/towers';
+import { NEST, NEST_WAKES_ON_OUTPOST_LOSS, OUTPOST, OUTPOST_ROW, POCKET_DEPTH, TowerStats } from '../data/towers';
 import { TargetRule, UnitStats } from '../data/units';
 import { CARDS } from '../data/cards';
 import { AI_DECK, Deck, PLAYER_DECK } from '../data/decks';
@@ -9,6 +9,12 @@ import { PlayerState, mulberry32 } from './player';
 export const DEPLOY_SECONDS = 1;
 // How far a locked target may drift past attack range before the attacker gives up on it.
 const LOCK_SLACK = 0.5;
+// Collision: relaxation passes per step, largest correction per pair per pass, and how
+// much heavier a bug counts while it stands its ground to attack.
+const SEPARATION_PASSES = 3;
+const MAX_PUSH = 0.12;
+const PLANTED_MASS = 2.5;
+const SWARM_SQUEEZE = 0.6;
 
 export const MATCH = {
   regulation: 180, // seconds
@@ -135,13 +141,24 @@ export class World {
     this.arena.setFootprint(id, col, row, stats.size, true);
   }
 
-  // Deploy zone: your own half, on dry, unoccupied ground (flyers can hover over puddles).
+  // The tiles a side may deploy on, ignoring what's standing there: its own half,
+  // plus a pocket on the enemy half behind each enemy Outpost it has knocked down.
+  inDeployZone(side: Side, col: number, row: number): boolean {
+    if (!this.arena.inBounds(col, row)) return false;
+    const ownHalf = side === 'player' ? row >= ROWS / 2 + 1 : row <= ROWS / 2 - 2;
+    if (ownHalf) return true;
+    const depth = side === 'player' ? row : ROWS - 1 - row; // rows from the enemy's back wall
+    if (depth < POCKET_DEPTH) return false;
+    return this.towers.some(
+      (t) => t.side !== side && t.role === 'outpost' && !t.alive && (t.x < COLS / 2) === (col < COLS / 2),
+    );
+  }
+
+  // Deploy zone, on dry, unoccupied ground (flyers can hover over puddles).
   canDeploy(side: Side, x: number, y: number, flying: boolean): boolean {
     const col = Math.floor(x);
     const row = Math.floor(y);
-    if (!this.arena.inBounds(col, row)) return false;
-    const ownHalf = side === 'player' ? row >= ROWS / 2 + 1 : row <= ROWS / 2 - 2;
-    if (!ownHalf) return false;
+    if (!this.inDeployZone(side, col, row)) return false;
     if (this.arena.occupied[row][col] !== null) return false;
     return flying || !this.arena.isWet(col, row);
   }
@@ -168,7 +185,8 @@ export class World {
     // Swarms land in a small ring around the drop point.
     for (let i = 0; i < card.count; i++) {
       const a = (i / card.count) * Math.PI * 2;
-      const r = card.count > 1 ? 0.8 : 0;
+      // A squad packs tightly so it covers about as much ground as one bug.
+      const r = card.count > 1 ? card.unit.radius * 2.2 : 0;
       let ux = x + Math.cos(a) * r;
       let uy = y + Math.sin(a) * r;
       if (!card.unit.flying && !this.arena.walkable(Math.floor(ux), Math.floor(uy))) {
@@ -366,44 +384,110 @@ export class World {
         gy = u.path[0].row + 0.5;
       }
     }
-    const dx = gx - u.x;
-    const dy = gy - u.y;
+    let dx = gx - u.x;
+    let dy = gy - u.y;
     const dist = Math.hypot(dx, dy);
     if (dist < 1e-6) return;
+    dx /= dist;
+    dy /= dist;
+    [dx, dy] = this.steer(u, dx, dy, target);
     const stepLen = Math.min(dist, u.stats.speed * DT);
-    u.x += (dx / dist) * stepLen;
-    u.y += (dy / dist) * stepLen;
+    this.nudge(u, dx * stepLen, dy * stepLen);
     u.facing = Math.atan2(dy, dx);
   }
 
-  // Light push-apart so friendly crowds don't stack on one point. Ground units never get
-  // pushed into puddles or towers.
+  // Veer around a bug standing in the way, toward whichever side is already
+  // clearer. Big bugs barely veer: they'd rather shove.
+  private steer(u: Unit, dx: number, dy: number, target: Entity): [number, number] {
+    let worst: Unit | undefined;
+    let worstAhead = Infinity;
+    let side = 0;
+    for (const o of this.units) {
+      if (o === u || !o.alive || o.flying !== u.flying || o.id === target.id) continue;
+      if (o.stats.id === u.stats.id && u.stats.mass < 2) continue; // squadmates just squeeze past
+      const ox = o.x - u.x;
+      const oy = o.y - u.y;
+      const ahead = ox * dx + oy * dy;
+      const lateral = ox * -dy + oy * dx;
+      const reach = u.radius + o.radius;
+      if (ahead <= 0 || ahead > reach + 0.35 || Math.abs(lateral) >= reach) continue;
+      if (ahead < worstAhead) {
+        worst = o;
+        worstAhead = ahead;
+        side = Math.abs(lateral) < 0.02 ? (u.id % 2 ? 1 : -1) : -Math.sign(lateral);
+      }
+    }
+    if (!worst) return [dx, dy];
+    const yielding = worst.stats.mass / (worst.stats.mass + u.stats.mass); // 0..1, high when the blocker is heavy
+    const angle = side * (0.35 + 0.75 * yielding);
+    const c = Math.cos(angle);
+    const sn = Math.sin(angle);
+    return [dx * c - dy * sn, dx * sn + dy * c];
+  }
+
+  // Bodies can't overlap. Each step, overlapping pairs on the same layer (ground
+  // or air, either side) are pushed apart, the lighter bug giving way more. A
+  // bug that has planted its feet to attack counts as heavier, so a crowd piles
+  // up behind a big bug instead of walking through it. Ground bugs slide along
+  // puddle edges and towers rather than being pushed into them.
   private separate() {
     const units = this.units.filter((u) => u.alive);
-    for (let i = 0; i < units.length; i++) {
-      for (let j = i + 1; j < units.length; j++) {
-        const a = units[i];
-        const b = units[j];
-        // Only friendly bugs jostle; enemies may overlap so nobody gets wedged against a tower.
-        if (a.flying !== b.flying || a.side !== b.side) continue;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const d = Math.hypot(dx, dy) || 0.01;
-        const overlap = a.radius + b.radius - d;
-        if (overlap <= 0) continue;
-        const push = Math.min(overlap / 2, 0.05);
-        this.nudge(a, (-dx / d) * push, (-dy / d) * push);
-        this.nudge(b, (dx / d) * push, (dy / d) * push);
+    for (let pass = 0; pass < SEPARATION_PASSES; pass++) {
+      for (let i = 0; i < units.length; i++) {
+        for (let j = i + 1; j < units.length; j++) {
+          const a = units[i];
+          const b = units[j];
+          if (a.flying !== b.flying) continue;
+          let dx = b.x - a.x;
+          let dy = b.y - a.y;
+          let d = Math.hypot(dx, dy);
+          // Swarm bugs of one kind can squeeze together a bit, so a squad moves as a pack.
+          const squeeze = a.stats.id === b.stats.id && a.stats.mass < 2 ? SWARM_SQUEEZE : 1;
+          const overlap = (a.radius + b.radius) * squeeze - d;
+          if (overlap <= 0) continue;
+          if (d < 1e-4) {
+            // Exactly on top of each other: split along a fixed per-pair direction.
+            const ang = (a.id * 7 + b.id * 13) % 360 * (Math.PI / 180);
+            dx = Math.cos(ang);
+            dy = Math.sin(ang);
+            d = 1;
+          }
+          const ma = this.inertia(a);
+          const mb = this.inertia(b);
+          // Head-on shoves deflect a little sideways so nobody gets pinned in a line.
+          const skew = ((a.id + b.id) % 2 ? 1 : -1) * 0.25;
+          const rx = dx * Math.cos(skew) - dy * Math.sin(skew);
+          const ry = dx * Math.sin(skew) + dy * Math.cos(skew);
+          dx = rx;
+          dy = ry;
+          const push = Math.min(overlap, MAX_PUSH);
+          const shareA = mb / (ma + mb);
+          this.nudge(a, (-dx / d) * push * shareA, (-dy / d) * push * shareA);
+          this.nudge(b, (dx / d) * push * (1 - shareA), (dy / d) * push * (1 - shareA));
+        }
       }
     }
   }
 
+  private inertia(u: Unit): number {
+    const planted = u.attacking || u.deploying > 0;
+    return u.stats.mass * (planted ? PLANTED_MASS : 1);
+  }
+
+  // Move a bug, sliding along walls on whichever axis is still free.
   private nudge(u: Unit, dx: number, dy: number) {
-    const nx = u.x + dx;
-    const ny = u.y + dy;
-    if (u.flying || this.arena.walkable(Math.floor(nx), Math.floor(ny))) {
-      u.x = Math.min(COLS - 0.01, Math.max(0.01, nx));
-      u.y = Math.min(ROWS - 0.01, Math.max(0.01, ny));
+    const clampX = (x: number) => Math.min(COLS - 0.01, Math.max(0.01, x));
+    const clampY = (y: number) => Math.min(ROWS - 0.01, Math.max(0.01, y));
+    const ok = (x: number, y: number) => u.flying || this.arena.walkable(Math.floor(x), Math.floor(y));
+    const nx = clampX(u.x + dx);
+    const ny = clampY(u.y + dy);
+    if (ok(nx, ny)) {
+      u.x = nx;
+      u.y = ny;
+    } else if (ok(nx, u.y)) {
+      u.x = nx;
+    } else if (ok(u.x, ny)) {
+      u.y = ny;
     }
   }
 

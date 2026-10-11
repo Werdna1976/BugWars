@@ -62,6 +62,7 @@ export class BattleScene extends Phaser.Scene {
   private countdown = COUNTDOWN_SECONDS;
   private countdownText!: Phaser.GameObjects.Text;
   private zoneShade!: Phaser.GameObjects.Graphics;
+  private zoneKey = '';
   private ghost!: Phaser.GameObjects.Image;
   private selected: number | null = null;
   private dragging = false;
@@ -106,7 +107,7 @@ export class BattleScene extends Phaser.Scene {
     }
 
     this.zoneShade = this.add.graphics().setDepth(90).setVisible(false);
-    this.zoneShade.fillStyle(0xe5484d, 0.18).fillRect(0, 0, ARENA_W, (ROWS / 2 + 1) * TILE);
+    this.zoneKey = '';
     this.ghost = this.add.image(0, 0, 'pillbug').setAlpha(0.6).setVisible(false).setDepth(200);
 
     this.drawSidePanels();
@@ -196,6 +197,8 @@ export class BattleScene extends Phaser.Scene {
         if (this.ended) return;
         this.selected = this.selected === i && !this.dragging ? null : i;
         this.dragging = this.selected !== null;
+        this.drawZone();
+        this.zoneShade.setVisible(this.selected !== null);
         this.refreshCards();
       });
       this.cards.push({ container, bg, icon, name, cost, shade, cardId: '' });
@@ -343,8 +346,29 @@ export class BattleScene extends Phaser.Scene {
     return this.selected === null ? null : CARDS[this.world.players.player.hand[this.selected]];
   }
 
+  // Shade the tiles you can't deploy on. Redrawn only when the zone changes (a tower falls).
+  private drawZone() {
+    const key = this.world.towers.map((t) => (t.alive ? 1 : 0)).join('');
+    if (key === this.zoneKey) return;
+    this.zoneKey = key;
+    const g = this.zoneShade.clear().fillStyle(0xe5484d, 0.2);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) if (!this.world.inDeployZone('player', c, r)) g.fillRect(c * TILE, r * TILE, TILE, TILE);
+    }
+    g.lineStyle(2, 0xffffff, 0.35);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const inside = this.world.inDeployZone('player', c, r);
+        if (inside && !this.world.inDeployZone('player', c, r - 1)) g.lineBetween(c * TILE, r * TILE, (c + 1) * TILE, r * TILE);
+        if (inside && c > 0 && !this.world.inDeployZone('player', c - 1, r)) g.lineBetween(c * TILE, r * TILE, c * TILE, (r + 1) * TILE);
+        if (inside && c < COLS - 1 && !this.world.inDeployZone('player', c + 1, r)) g.lineBetween((c + 1) * TILE, r * TILE, (c + 1) * TILE, (r + 1) * TILE);
+      }
+    }
+  }
+
   private updateGhost(p: Phaser.Input.Pointer) {
     const card = this.selectedCard();
+    if (card) this.drawZone();
     this.zoneShade.setVisible(!!card && !this.ended);
     if (!card || !onField(p) || this.ended) {
       this.ghost.setVisible(false);
