@@ -4,7 +4,7 @@
 export type TargetRule = 'ground' | 'air' | 'both' | 'buildings';
 
 export interface UnitStats {
-  id: string;
+  id: string; // also the sprite key
   name: string;
   hp: number;
   damage: number;
@@ -15,34 +15,21 @@ export interface UnitStats {
   radius: number;
   flying: boolean;
   targets: TargetRule;
+  prefersAir?: boolean; // picks flyers over closer ground targets
+  firstStrikeMult?: number; // multiplier on the first attack
 }
 
-// Stand-in units for the arena prototype. Real cards replace these in step 2.
+export const SPEED = { slow: 0.75, medium: 1.0, fast: 1.33, veryFast: 1.67 } as const;
+export const MELEE = 0.3;
+
+// Stand-in units for the arena prototype.
 export const TEST_UNITS: Record<string, UnitStats> = {
   beetle: {
-    id: 'beetle',
-    name: 'Test Beetle',
-    hp: 700,
-    damage: 90,
-    hitSpeed: 1.2,
-    range: 0.3,
-    speed: 1.0,
-    sight: 5.5,
-    radius: 0.45,
-    flying: false,
-    targets: 'ground',
+    id: 'beetle', name: 'Test Beetle', hp: 700, damage: 90, hitSpeed: 1.2, range: MELEE,
+    speed: SPEED.medium, sight: 5.5, radius: 0.45, flying: false, targets: 'ground',
   },
   wasp: {
-    id: 'wasp',
-    name: 'Test Wasp',
-    hp: 320,
-    damage: 60,
-    hitSpeed: 1.0,
-    range: 0.3,
-    speed: 1.5,
-    sight: 5.5,
-    radius: 0.4,
-    flying: true,
-    targets: 'both',
+    id: 'wasp', name: 'Test Wasp', hp: 320, damage: 60, hitSpeed: 1.0, range: MELEE,
+    speed: SPEED.fast, sight: 5.5, radius: 0.4, flying: true, targets: 'both',
   },
 };

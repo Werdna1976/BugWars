@@ -4,6 +4,12 @@ A Clash Royale-style lane battler set in a backyard garden. Player vs. AI in the
 
 Play: https://werdna1976.github.io/BugWars/
 
+## How to play
+
+Your Nectar refills over time. Tap a card, then tap your half of the field to drop it there, or drag the card onto the field. Hover a card (or tap it) to see what the bug does. Ground bugs walk around the puddles through the two dry crossings; flyers go straight over. Knock down the enemy Nest to win.
+
+Both sides use fixed 10-card decks (`src/data/decks.ts`). A deck may contain up to three cards twice, so at least seven different bugs.
+
 ## Run locally
 
 ```

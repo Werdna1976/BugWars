@@ -2,6 +2,11 @@ import { Arena, Tile } from './arena';
 import { COLS, DT, ROWS, Side, otherSide } from './constants';
 import { NEST, OUTPOST, TowerStats } from '../data/towers';
 import { UnitStats } from '../data/units';
+import { CARDS } from '../data/cards';
+import { AI_DECK, Deck, PLAYER_DECK } from '../data/decks';
+import { PlayerState, mulberry32 } from './player';
+
+export const DEPLOY_SECONDS = 1;
 
 interface Body {
   id: number;
@@ -37,6 +42,8 @@ export interface Unit extends Body {
   repathIn: number;
   facing: number; // radians, for rendering
   attacking: boolean;
+  deploying: number; // seconds until it starts acting
+  struck: boolean; // has landed its first attack
 }
 
 export type Entity = Tower | Unit;
@@ -51,11 +58,13 @@ export interface Projectile {
   targetId: number;
   damage: number;
   speed: number;
+  kind: 'seed' | 'spit';
 }
 
 export type WorldEvent =
   | { type: 'hit'; x: number; y: number; targetId: number }
-  | { type: 'death'; x: number; y: number; side: Side; isTower: boolean };
+  | { type: 'death'; x: number; y: number; side: Side; isTower: boolean }
+  | { type: 'deploy'; x: number; y: number; side: Side; cardId: string };
 
 export class World {
   readonly arena = new Arena();
@@ -64,15 +73,25 @@ export class World {
   events: WorldEvent[] = [];
   tick = 0;
   winner: Side | null = null;
+  readonly players: Record<Side, PlayerState>;
   private nextId = 1;
 
-  constructor() {
+  constructor(seed = 1, decks: Record<Side, Deck> = { player: PLAYER_DECK, enemy: AI_DECK }) {
+    const rng = mulberry32(seed);
+    this.players = { player: new PlayerState(decks.player, rng), enemy: new PlayerState(decks.enemy, rng) };
     for (const side of ['player', 'enemy'] as Side[]) {
       const top = side === 'enemy';
       this.addTower(side, 'nest', NEST, 7, top ? 1 : ROWS - 1 - NEST.size);
       this.addTower(side, 'outpost', OUTPOST, 2, top ? 5 : ROWS - 5 - OUTPOST.size);
       this.addTower(side, 'outpost', OUTPOST, COLS - 2 - OUTPOST.size, top ? 5 : ROWS - 5 - OUTPOST.size);
     }
+  }
+
+  // Hands the renderer everything that happened since the last call.
+  drainEvents(): WorldEvent[] {
+    const out = this.events;
+    this.events = [];
+    return out;
   }
 
   get towers(): Tower[] {
@@ -116,15 +135,40 @@ export class World {
       hp: stats.hp, maxHp: stats.hp, radius: stats.radius, flying: stats.flying, alive: true,
       cooldown: 0, targetId: null, path: [], repathIn: 0,
       facing: side === 'player' ? -Math.PI / 2 : Math.PI / 2, attacking: false,
+      deploying: DEPLOY_SECONDS, struck: false,
     };
     this.entities.push(unit);
     return unit;
   }
 
+  // Returns false (and changes nothing) if the card can't be played there right now.
+  playCard(side: Side, handIndex: number, x: number, y: number): boolean {
+    const player = this.players[side];
+    const card = CARDS[player.hand[handIndex]];
+    if (!card || player.nectar < card.cost || !this.canDeploy(side, x, y, card.unit.flying)) return false;
+    player.nectar -= card.cost;
+    player.cycle(handIndex);
+    // Swarms land in a small ring around the drop point.
+    for (let i = 0; i < card.count; i++) {
+      const a = (i / card.count) * Math.PI * 2;
+      const r = card.count > 1 ? 0.8 : 0;
+      let ux = x + Math.cos(a) * r;
+      let uy = y + Math.sin(a) * r;
+      if (!card.unit.flying && !this.arena.walkable(Math.floor(ux), Math.floor(uy))) {
+        ux = x;
+        uy = y;
+      }
+      this.spawnUnit(side, card.unit, ux, uy);
+    }
+    this.events.push({ type: 'deploy', x, y, side, cardId: card.id });
+    return true;
+  }
+
   step() {
     if (this.winner) return;
+    this.players.player.refill(DT);
+    this.players.enemy.refill(DT);
     this.tick++;
-    this.events = [];
     for (const e of this.entities) {
       e.prevX = e.x;
       e.prevY = e.y;
@@ -161,7 +205,7 @@ export class World {
       t.targetId = target?.id ?? null;
     }
     if (target && t.cooldown === 0) {
-      this.fire(t.side, t.x, t.y, target.id, t.stats.damage, t.stats.projectileSpeed);
+      this.fire(t.side, t.x, t.y, target.id, t.stats.damage, t.stats.projectileSpeed, 'seed');
       t.cooldown = t.stats.hitSpeed;
     }
   }
@@ -181,13 +225,19 @@ export class World {
   }
 
   private stepUnit(u: Unit) {
+    if (u.deploying > 0) {
+      u.deploying -= DT;
+      return;
+    }
     u.cooldown = Math.max(0, u.cooldown - DT);
     const s = u.stats;
     const hittable = (e: Entity) => this.canHit(s.targets, e);
 
     // Retarget: anything hittable in sight beats marching on a tower.
     let target = this.byId(u.targetId);
-    const inSight = this.nearestEnemy(u, s.sight, (e) => hittable(e) && (s.targets === 'buildings' || e.kind === 'unit'));
+    const inSight =
+      (s.prefersAir ? this.nearestEnemy(u, s.sight, (e) => e.kind === 'unit' && e.flying) : undefined) ??
+      this.nearestEnemy(u, s.sight, (e) => hittable(e) && (s.targets === 'buildings' || e.kind === 'unit'));
     if (!target || (target.kind === 'tower' && inSight) || this.gap(u, target) > s.sight + 2) {
       target = inSight ?? this.nearestEnemyTower(u);
     }
@@ -204,7 +254,10 @@ export class World {
       u.attacking = true;
       u.facing = Math.atan2(target.y - u.y, target.x - u.x);
       if (u.cooldown === 0) {
-        this.damage(target, s.damage);
+        const dmg = s.damage * (!u.struck && s.firstStrikeMult ? s.firstStrikeMult : 1);
+        u.struck = true;
+        if (s.range > 1) this.fire(u.side, u.x, u.y, target.id, dmg, 10, 'spit');
+        else this.damage(target, dmg);
         u.cooldown = s.hitSpeed;
       }
       return;
@@ -287,8 +340,8 @@ export class World {
     }
   }
 
-  private fire(side: Side, x: number, y: number, targetId: number, damage: number, speed: number) {
-    this.projectiles.push({ id: this.nextId++, side, x, y, prevX: x, prevY: y, targetId, damage, speed });
+  private fire(side: Side, x: number, y: number, targetId: number, damage: number, speed: number, kind: Projectile['kind']) {
+    this.projectiles.push({ id: this.nextId++, side, x, y, prevX: x, prevY: y, targetId, damage, speed, kind });
   }
 
   private stepProjectiles() {

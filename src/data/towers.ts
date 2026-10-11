@@ -13,8 +13,8 @@ export interface TowerStats {
 export const NEST: TowerStats = {
   name: 'Nest',
   size: 4,
-  hp: 2400,
-  damage: 70,
+  hp: 4000,
+  damage: 110,
   hitSpeed: 1.0,
   range: 7,
   projectileSpeed: 14,
@@ -23,8 +23,8 @@ export const NEST: TowerStats = {
 export const OUTPOST: TowerStats = {
   name: 'Outpost',
   size: 3,
-  hp: 1400,
-  damage: 50,
+  hp: 2500,
+  damage: 100, // Archer Ant baseline from the design doc
   hitSpeed: 0.8,
   range: 7.5,
   projectileSpeed: 16,
