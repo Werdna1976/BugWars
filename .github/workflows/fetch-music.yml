@@ -1,0 +1,43 @@
+name: Fetch music
+
+# One-off helper: downloads the CC-BY music tracks into public/music and
+# commits them, since the dev container can't reach incompetech.com.
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/fetch-music.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download tracks
+        run: |
+          set -euo pipefail
+          base="https://incompetech.com/music/royalty-free/mp3-royaltyfree"
+          get() {
+            curl -fL --retry 3 -A "Mozilla/5.0" -o "public/music/$2" "$base/$1"
+            size=$(stat -c %s "public/music/$2")
+            file "public/music/$2"
+            # Reject error pages saved under an .mp3 name.
+            if [ "$size" -lt 200000 ] || ! file "public/music/$2" | grep -qiE 'audio|MPEG|ID3'; then
+              echo "::error::$2 doesn't look like an MP3 ($size bytes)"; exit 1
+            fi
+          }
+          mkdir -p public/music
+          get "Monkeys%20Spinning%20Monkeys.mp3" match.mp3
+          get "Pixel%20Peeker%20Polka%20-%20faster.mp3" overtime.mp3
+          ls -la public/music
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/music/*.mp3
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "Add music tracks (Kevin MacLeod, CC-BY 4.0)"
+          git push
