@@ -37,6 +37,7 @@ interface UnitView {
   flash: number; // seconds of white hit-flash left
   lastX: number;
   lastY: number;
+  dust: number; // distance walked since the last footfall puff (heavy bugs only)
 }
 
 interface TowerView {
@@ -661,6 +662,14 @@ export class BattleScene extends Phaser.Scene {
           if (src?.kind === 'tower') {
             const tv = this.towerViews.get(src.id);
             if (tv) tv.recoil = 1;
+            // Muzzle puff: from the sunflower's face, or the Nest's entrance.
+            const target = w.byId(ev.targetId);
+            const a = target ? Math.atan2(target.y - src.y, target.x - src.x) : 0;
+            const reach = src.role === 'nest' ? src.radius * 0.9 : 0.75;
+            const mx = (src.x + Math.cos(a) * reach) * TILE;
+            const my = (src.y + Math.sin(a) * reach) * TILE;
+            const puff = this.add.image(mx, my, 'puff').setDepth(141).setScale(0.18).setAlpha(0.8).setTint(src.role === 'nest' ? 0xffd070 : 0xf0e8c0);
+            this.tweens.add({ targets: puff, x: mx + Math.cos(a) * 10, y: my + Math.sin(a) * 10, scale: 0.4, alpha: 0, duration: 260, onComplete: () => puff.destroy() });
           }
           sfx.play(ev.kind, { pan: src ? this.pan(src.x) : 0 });
           break;
@@ -933,6 +942,18 @@ export class BattleScene extends Phaser.Scene {
       const moved = Math.hypot(x - view.lastX, y - view.lastY) / TILE;
       view.lastX = x;
       view.lastY = y;
+      // Heavy bugs kick up a little dust as they stomp along.
+      if (!u.flying && u.stats.mass >= 10) {
+        view.dust += moved;
+        if (view.dust > 0.55) {
+          view.dust = 0;
+          const side = Math.random() < 0.5 ? -1 : 1;
+          const px = x - Math.cos(u.facing) * u.radius * TILE * 0.6 - Math.sin(u.facing) * side * u.radius * TILE * 0.6;
+          const py = y - Math.sin(u.facing) * u.radius * TILE * 0.6 + Math.cos(u.facing) * side * u.radius * TILE * 0.6;
+          const d = this.add.image(px, py, 'puff').setDepth(y / TILE - 0.03).setScale(0.14).setAlpha(0.5).setTint(0xc8a880);
+          this.tweens.add({ targets: d, scale: 0.32, alpha: 0, duration: 500, onComplete: () => d.destroy() });
+        }
+      }
       if (u.flying) view.walk = (view.walk + dt * 7) % 1;
       else view.walk = (view.walk + moved / (u.radius * 2.4)) % 1;
       // A fresh attack restarts the strike animation.
@@ -1015,7 +1036,7 @@ export class BattleScene extends Phaser.Scene {
     const sprite = this.add.sprite(0, 0, `${u.stats.id}_anim`, '0');
     const view: UnitView = {
       shadow, ring, sprite, bar: this.add.graphics().setDepth(130),
-      walk: Math.random(), lastCooldown: 0, strikeT: Infinity, flash: 0, lastX: u.x * TILE, lastY: u.y * TILE,
+      walk: Math.random(), lastCooldown: 0, strikeT: Infinity, flash: 0, lastX: u.x * TILE, lastY: u.y * TILE, dust: 0,
     };
     this.unitViews.set(u.id, view);
     return view;
