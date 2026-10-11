@@ -167,3 +167,39 @@ describe('match flow', () => {
     expect(played).toBeGreaterThan(20);
   });
 });
+
+describe('towers', () => {
+  it('the Nest sleeps through an Outpost loss and wakes in overtime', () => {
+    const w = new World(1);
+    const nest = w.towers.find((t) => t.side === 'enemy' && t.role === 'nest')!;
+    w.towers.find((t) => t.side === 'enemy' && t.role === 'outpost')!.hp = 0;
+    w.towers.find((t) => t.side === 'player' && t.role === 'outpost')!.hp = 0;
+    w.step();
+    expect(nest.active).toBe(false);
+    for (let i = 0; i < 20 * 181 && w.phase === 'regulation'; i++) w.step();
+    expect(w.phase).toBe('overtime');
+    expect(nest.active).toBe(true);
+  });
+
+  // Andrew's benchmark: alone and undefended, a big tank badly hurts an Outpost,
+  // a glass cannon gets about one shot off, and a swarm's last ant reaches it.
+  const soloDamage = (cardId: string) => {
+    const w = new World(1);
+    w.players.player.hand[0] = cardId;
+    w.players.player.nectar = 16;
+    w.playCard('player', 0, 3.5, 19);
+    const enemy = w.towers.filter((t) => t.side === 'enemy');
+    const before = enemy.reduce((s, t) => s + t.hp, 0);
+    for (let i = 0; i < 20 * 90 && w.units.length; i++) w.step();
+    return before - enemy.reduce((s, t) => s + Math.max(0, t.hp), 0);
+  };
+
+  it('undefended bugs hit an Outpost by the agreed amounts', () => {
+    const outpostHp = new World(1).towers.find((t) => t.role === 'outpost')!.maxHp;
+    expect(soloDamage('goliath') / outpostHp).toBeGreaterThan(0.6);
+    expect(soloDamage('goliath') / outpostHp).toBeLessThan(1);
+    expect(soloDamage('assassin')).toBeLessThanOrEqual(CARDS.assassin.unit.damage * 2);
+    expect(soloDamage('fireants')).toBeGreaterThan(0);
+    for (const id of Object.keys(CARDS)) expect(soloDamage(id), id).toBeLessThan(outpostHp);
+  });
+});

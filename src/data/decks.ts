@@ -16,7 +16,7 @@ export const PLAYER_DECK: Deck = {
 export const AI_DECK: Deck = {
   name: 'Sky Sting',
   // Tuned with scripts/simulate.ts to win about half its AI-vs-AI games against Beetle Rush.
-  cards: ['dragonfly', 'hornet', 'mantis', 'assassin', 'assassin', 'termites', 'pillbug', 'pillbug', 'goliath', 'spitter'],
+  cards: ['dragonfly', 'hornet', 'mantis', 'assassin', 'assassin', 'termites', 'termites', 'pillbug', 'goliath', 'spitter'],
 };
 
 // Returns a list of rule violations (empty when the deck is legal).

@@ -1,6 +1,6 @@
 import { Arena, Tile } from './arena';
 import { COLS, DT, ROWS, Side, otherSide } from './constants';
-import { NEST, OUTPOST, TowerStats } from '../data/towers';
+import { NEST, NEST_WAKES_ON_OUTPOST_LOSS, OUTPOST, OUTPOST_ROW, TowerStats } from '../data/towers';
 import { UnitStats } from '../data/units';
 import { CARDS } from '../data/cards';
 import { AI_DECK, Deck, PLAYER_DECK } from '../data/decks';
@@ -95,8 +95,8 @@ export class World {
     for (const side of ['player', 'enemy'] as Side[]) {
       const top = side === 'enemy';
       this.addTower(side, 'nest', NEST, 7, top ? 1 : ROWS - 1 - NEST.size);
-      this.addTower(side, 'outpost', OUTPOST, 2, top ? 5 : ROWS - 5 - OUTPOST.size);
-      this.addTower(side, 'outpost', OUTPOST, COLS - 2 - OUTPOST.size, top ? 5 : ROWS - 5 - OUTPOST.size);
+      this.addTower(side, 'outpost', OUTPOST, 2, top ? OUTPOST_ROW : ROWS - OUTPOST_ROW - OUTPOST.size);
+      this.addTower(side, 'outpost', OUTPOST, COLS - 2 - OUTPOST.size, top ? OUTPOST_ROW : ROWS - OUTPOST_ROW - OUTPOST.size);
     }
   }
 
@@ -224,6 +224,7 @@ export class World {
     } else if (this.phase === 'regulation') {
       this.phase = 'overtime';
       this.timeLeft = MATCH.overtime;
+      for (const t of this.towers) if (t.role === 'nest') t.active = true;
     } else {
       // Still level after overtime: the side whose weakest tower is healthier wins.
       const weakest = (side: Side) => Math.min(...this.towers.filter((t) => t.side === side && t.alive).map((t) => t.hp / t.maxHp));
@@ -436,7 +437,7 @@ export class World {
         if (e.role === 'nest') {
           this.finish(otherSide(e.side));
         } else {
-          for (const t of this.towers) if (t.side === e.side && t.role === 'nest') t.active = true;
+          if (NEST_WAKES_ON_OUTPOST_LOSS) for (const t of this.towers) if (t.side === e.side && t.role === 'nest') t.active = true;
         }
       }
     }

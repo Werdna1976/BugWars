@@ -3,15 +3,20 @@ import { COLS, DT, ROWS, Side } from '../sim/constants';
 import { Entity, Result, Unit, World } from '../sim/world';
 import { SimpleAi } from '../sim/ai';
 import { HAND_SIZE, NECTAR } from '../sim/player';
-import { CARDS, CardDef, KEYWORDS, RANGE_LABEL, SPEED_LABEL } from '../data/cards';
+import { CARDS, CardDef } from '../data/cards';
+import { AI_DECK } from '../data/decks';
 import { TILE, bakeTextures } from './textures';
+import { FONT, drawCardDetails } from './details';
+import { music } from '../audio/music';
 
 export const ARENA_W = COLS * TILE;
 export const ARENA_H = ROWS * TILE;
 export const PANEL_H = 230;
+export const SIDE_W = 320; // info panels left and right of the field
+export const GAME_W = ARENA_W + SIDE_W * 2;
+const COUNTDOWN_SECONDS = 8;
 
 const SIDE_COLOR: Record<Side, number> = { player: 0x3d8bfd, enemy: 0xe5484d };
-const FONT = 'system-ui, -apple-system, Segoe UI, sans-serif';
 
 const CARD_W = 106;
 const CARD_H = 150;
@@ -50,7 +55,12 @@ export class BattleScene extends Phaser.Scene {
   private nextCard!: { icon: Phaser.GameObjects.Image; cost: Phaser.GameObjects.Text };
   private nectarBar!: Phaser.GameObjects.Graphics;
   private nectarText!: Phaser.GameObjects.Text;
-  private tooltip!: Phaser.GameObjects.Container;
+  private yourDetails!: Phaser.GameObjects.Container;
+  private yourHint!: Phaser.GameObjects.Text;
+  private theirDetails!: Phaser.GameObjects.Container;
+  private theirRows: Phaser.GameObjects.Rectangle[] = [];
+  private countdown = COUNTDOWN_SECONDS;
+  private countdownText!: Phaser.GameObjects.Text;
   private zoneShade!: Phaser.GameObjects.Graphics;
   private ghost!: Phaser.GameObjects.Image;
   private selected: number | null = null;
@@ -80,6 +90,11 @@ export class BattleScene extends Phaser.Scene {
     this.towerViews.clear();
     this.projViews.clear();
     this.cards = [];
+    this.theirRows = [];
+    this.countdown = COUNTDOWN_SECONDS;
+
+    // World x = 0 is the left edge of the field; the side panels sit at negative x and past ARENA_W.
+    this.cameras.main.setScroll(-SIDE_W, 0);
 
     this.drawGround();
     this.drawPuddles();
@@ -94,9 +109,15 @@ export class BattleScene extends Phaser.Scene {
     this.zoneShade.fillStyle(0xe5484d, 0.18).fillRect(0, 0, ARENA_W, (ROWS / 2 + 1) * TILE);
     this.ghost = this.add.image(0, 0, 'pillbug').setAlpha(0.6).setVisible(false).setDepth(200);
 
-    this.tooltip = this.add.container(0, 0).setDepth(500).setVisible(false);
+    this.drawSidePanels();
     this.drawPanel();
     this.drawHud();
+    this.countdownText = this.add.text(ARENA_W / 2, ARENA_H / 2 - 10, '', {
+      fontFamily: FONT, fontSize: '30px', color: '#ffe9a8', fontStyle: 'bold', align: 'center',
+      stroke: '#2a1a05', strokeThickness: 6,
+    }).setOrigin(0.5).setDepth(450);
+    this.input.once('pointerdown', () => music.start());
+    music.setIntense(false);
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.updateGhost(p));
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onArenaDown(p));
@@ -207,15 +228,15 @@ export class BattleScene extends Phaser.Scene {
     const next = CARDS[me.queue[0]];
     this.nextCard.icon.setTexture(next.unit.id).setScale(Math.min(1, 40 / this.textures.get(next.unit.id).getSourceImage().width * 1.3));
     this.nextCard.cost.setText(`${next.cost} Nectar`);
-    if (this.hovered !== null || this.selected !== null) this.showTooltip(this.hovered ?? this.selected!);
-    else this.tooltip.setVisible(false);
+    const show = this.hovered ?? this.selected;
+    if (show !== null) this.showYourCard(show);
   }
 
   // Per-frame: Nectar bar and the "charging" shade on cards you can't afford yet.
   private updatePanel() {
     const me = this.world.players.player;
     const y = ARENA_H + 12;
-    const x0 = 120;
+    const x0 = 140;
     const w = ARENA_W - x0 - 14;
     const seg = w / NECTAR.cap;
     const g = this.nectarBar.clear();
@@ -237,76 +258,83 @@ export class BattleScene extends Phaser.Scene {
   private setHover(i: number | null) {
     this.hovered = i;
     const show = i ?? this.selected;
-    if (show === null) this.tooltip.setVisible(false);
-    else this.showTooltip(show);
+    if (show !== null) this.showYourCard(show);
   }
 
-  private showTooltip(i: number) {
+  // ---------- Side panels ----------
+
+  private drawSidePanels() {
+    const pad = 18;
+    const inner = SIDE_W - pad * 2;
+    const h = ARENA_H + PANEL_H;
+    const header = (x: number, text: string, color: string) =>
+      this.add.text(x, 16, text, { fontFamily: FONT, fontSize: '15px', color, fontStyle: 'bold' }).setDepth(301);
+
+    // Left: the card you're hovering or holding, shown large.
+    const lx = -SIDE_W;
+    this.add.rectangle(lx, 0, SIDE_W, h, 0x1f2c19).setOrigin(0, 0).setDepth(300);
+    this.add.rectangle(-1, 0, 2, h, 0x0f160c).setOrigin(0, 0).setDepth(301);
+    header(lx + pad, 'YOUR CARD', '#b3d1ff');
+    this.yourHint = this.add.text(lx + pad, 50, 'Hover over a card in your hand (or tap it) to see what it does.', {
+      fontFamily: FONT, fontSize: '17px', color: '#c9d8b8', wordWrap: { width: inner },
+    }).setDepth(301);
+    this.yourDetails = this.add.container(lx + pad, 50).setDepth(301);
+
+    const mute = this.add.text(lx + pad, h - 40, '', {
+      fontFamily: FONT, fontSize: '16px', color: '#ffe9a8', backgroundColor: '#2f4226', padding: { x: 10, y: 6 },
+    }).setDepth(302).setInteractive({ useHandCursor: true });
+    const label = () => mute.setText(music.muted ? 'Music: off' : 'Music: on');
+    label();
+    mute.on('pointerdown', (_p: unknown, _x: unknown, _y: unknown, ev: Phaser.Types.Input.EventData) => {
+      ev.stopPropagation();
+      music.start();
+      music.toggleMute();
+      label();
+    });
+
+    // Right: the AI's deck. Hover a row to read about that bug.
+    const rx = ARENA_W;
+    this.add.rectangle(rx, 0, SIDE_W, h, 0x2a1d1b).setOrigin(0, 0).setDepth(300);
+    this.add.rectangle(rx - 1, 0, 2, h, 0x160d0c).setOrigin(0, 0).setDepth(301);
+    header(rx + pad, `AI DECK: ${AI_DECK.name.toUpperCase()}`, '#ffb3b5');
+    const counts = new Map<string, number>();
+    for (const id of AI_DECK.cards) counts.set(id, (counts.get(id) ?? 0) + 1);
+    let y = 44;
+    const rowH = 44;
+    for (const [id, n] of counts) {
+      const card = CARDS[id];
+      const row = this.add.rectangle(rx + pad, y, inner, rowH - 4, 0x3a2724).setOrigin(0, 0).setDepth(301)
+        .setInteractive({ useHandCursor: true });
+      const tex = this.textures.get(card.unit.id).getSourceImage();
+      this.add.image(rx + pad + 22, y + rowH / 2 - 2, card.unit.id)
+        .setScale(Math.min(1, 34 / Math.max(tex.width, tex.height))).setRotation(-Math.PI / 2).setDepth(302);
+      this.add.text(rx + pad + 48, y + 9, card.name + (n > 1 ? ` ×${n}` : ''), {
+        fontFamily: FONT, fontSize: '16px', color: '#ffffff',
+      }).setDepth(302);
+      this.add.text(rx + SIDE_W - pad - 8, y + 9, String(card.cost), {
+        fontFamily: FONT, fontSize: '16px', color: '#ffe9a8', fontStyle: 'bold',
+      }).setOrigin(1, 0).setDepth(302);
+      row.on('pointerover', () => this.showTheirCard(card, row));
+      row.on('pointerdown', (_p: unknown, _x: unknown, _y: unknown, ev: Phaser.Types.Input.EventData) => {
+        ev.stopPropagation();
+        this.showTheirCard(card, row);
+      });
+      this.theirRows.push(row);
+      y += rowH;
+    }
+    this.theirDetails = this.add.container(rx + pad, y + 16).setDepth(301);
+    this.showTheirCard(CARDS[AI_DECK.cards[0]], this.theirRows[0]);
+  }
+
+  private showYourCard(i: number) {
     const card = CARDS[this.world.players.player.hand[i]];
-    this.tooltip.removeAll(true);
-    const w = 330;
-    const pad = 12;
-    const parts: Phaser.GameObjects.GameObject[] = [];
-    let y = pad;
+    this.yourHint.setVisible(false);
+    drawCardDetails(this, this.yourDetails, card, SIDE_W - 36);
+  }
 
-    const title = this.add.text(pad, y, card.name, { fontFamily: FONT, fontSize: '18px', color: '#ffffff', fontStyle: 'bold' });
-    const cost = this.add.text(w - pad, y + 2, `${card.cost} Nectar`, { fontFamily: FONT, fontSize: '15px', color: '#ffe9a8' }).setOrigin(1, 0);
-    parts.push(title, cost);
-    y += 28;
-
-    // Keyword chips, wrapping across lines.
-    let cx = pad;
-    for (const kw of card.keywords) {
-      const label = this.add.text(0, 0, kw, { fontFamily: FONT, fontSize: '13px', color: '#1d2a17', fontStyle: 'bold' });
-      const cw = label.width + 14;
-      if (cx + cw > w - pad) {
-        cx = pad;
-        y += 26;
-      }
-      const chip = this.add.rectangle(cx, y, cw, 22, kwColor(kw)).setOrigin(0, 0);
-      label.setPosition(cx + 7, y + 3);
-      parts.push(chip, label);
-      cx += cw + 6;
-    }
-    y += 30;
-
-    const u = card.unit;
-    const statLine = [
-      card.count > 1 ? `${card.count} bugs × ${u.hp} HP` : `${u.hp} HP`,
-      `${u.damage} dmg every ${u.hitSpeed}s`,
-      `${RANGE_LABEL(u.range)} range`,
-      `${SPEED_LABEL(u.speed)}`,
-    ].join('  ·  ');
-    const stats = this.add.text(pad, y, statLine, { fontFamily: FONT, fontSize: '13px', color: '#c9d8b8', wordWrap: { width: w - pad * 2 } });
-    parts.push(stats);
-    y += stats.height + 8;
-
-    const blurb = this.add.text(pad, y, card.blurb, { fontFamily: FONT, fontSize: '14px', color: '#ffffff', wordWrap: { width: w - pad * 2 } });
-    parts.push(blurb);
-    y += blurb.height + 8;
-
-    for (const kw of card.keywords) {
-      const line = this.add.text(pad, y, `${kw}: ${KEYWORDS[kw]}`, {
-        fontFamily: FONT, fontSize: '12px', color: '#d8d0bc', wordWrap: { width: w - pad * 2 },
-      });
-      parts.push(line);
-      y += line.height + 3;
-    }
-    if (card.comingLater) {
-      y += 4;
-      const later = this.add.text(pad, y, `Coming later: ${card.comingLater}`, {
-        fontFamily: FONT, fontSize: '12px', color: '#9fb08a', fontStyle: 'italic', wordWrap: { width: w - pad * 2 },
-      });
-      parts.push(later);
-      y += later.height;
-    }
-    y += pad;
-
-    const bg = this.add.rectangle(0, 0, w, y, 0x16210f, 0.95).setOrigin(0, 0).setStrokeStyle(2, 0xf2c12e);
-    this.tooltip.add([bg, ...parts]);
-    const cardX = 10 + i * (CARD_W + CARD_GAP) + CARD_W / 2;
-    const tx = Phaser.Math.Clamp(cardX - w / 2, 6, ARENA_W - w - 6);
-    this.tooltip.setPosition(tx, ARENA_H - y - 10).setVisible(true);
+  private showTheirCard(card: CardDef, row: Phaser.GameObjects.Rectangle) {
+    for (const r of this.theirRows) r.setFillStyle(r === row ? 0x5a3a34 : 0x3a2724);
+    drawCardDetails(this, this.theirDetails, card, SIDE_W - 36);
   }
 
   // ---------- Deploying ----------
@@ -318,24 +346,24 @@ export class BattleScene extends Phaser.Scene {
   private updateGhost(p: Phaser.Input.Pointer) {
     const card = this.selectedCard();
     this.zoneShade.setVisible(!!card && !this.ended);
-    if (!card || p.y >= ARENA_H || this.ended) {
+    if (!card || !onField(p) || this.ended) {
       this.ghost.setVisible(false);
       return;
     }
-    const ok = this.world.canDeploy('player', p.x / TILE, p.y / TILE, card.unit.flying)
+    const ok = this.world.canDeploy('player', p.worldX / TILE, p.worldY / TILE, card.unit.flying)
       && this.world.players.player.nectar >= card.cost;
     this.ghost
       .setTexture(card.unit.id)
       .setScale(spriteScale(this, card.unit.id, card.unit.radius))
       .setRotation(-Math.PI / 2)
-      .setPosition(p.x, p.y)
+      .setPosition(p.worldX, p.worldY)
       .setTint(ok ? 0xffffff : 0xff6666)
       .setVisible(true);
   }
 
   private tryDeploy(p: Phaser.Input.Pointer) {
-    if (this.selected === null || p.y >= ARENA_H) return;
-    if (this.world.playCard('player', this.selected, p.x / TILE, p.y / TILE)) {
+    if (this.selected === null || !onField(p) || this.countdown > 0) return;
+    if (this.world.playCard('player', this.selected, p.worldX / TILE, p.worldY / TILE)) {
       this.selected = null;
       this.ghost.setVisible(false);
       this.zoneShade.setVisible(false);
@@ -352,7 +380,7 @@ export class BattleScene extends Phaser.Scene {
   private onPointerUp(p: Phaser.Input.Pointer) {
     if (!this.dragging) return;
     this.dragging = false;
-    if (p.y < ARENA_H) this.tryDeploy(p);
+    if (onField(p)) this.tryDeploy(p);
   }
 
   // ---------- Match HUD ----------
@@ -382,7 +410,10 @@ export class BattleScene extends Phaser.Scene {
     this.crownText.player.setText(`You took ${w.crowns('player')}`);
 
     if (w.doubleNectar && w.phase === 'regulation') this.announce('double', 'Double Nectar!');
-    if (w.phase === 'overtime') this.announce('overtime', 'Overtime! Next tower wins');
+    if (w.phase === 'overtime') {
+      this.announce('overtime', 'Overtime! Next tower wins');
+      music.setIntense(true);
+    }
   }
 
   private announce(key: string, text: string) {
@@ -402,8 +433,22 @@ export class BattleScene extends Phaser.Scene {
 
   // ---------- Loop ----------
 
-  update(_time: number, deltaMs: number) {
-    this.acc += Math.min(deltaMs / 1000, 0.25);
+  update() {
+    // Real elapsed time (capped), so the match clock stays honest on slow machines
+    // instead of Phaser's smoothed delta turning into slow motion.
+    const deltaMs = Math.min(this.game.loop.rawDelta, 250);
+    if (this.countdown > 0) {
+      // Pre-match: the field is frozen so you can read your cards.
+      this.countdown = Math.max(0, this.countdown - deltaMs / 1000);
+      this.countdownText.setText(this.countdown > 0
+        ? `Match starts in ${Math.ceil(this.countdown)}\nHover your cards to read about them`
+        : '');
+      if (this.countdown === 0) this.announce('go', 'Go!');
+      this.updatePanel();
+      this.updateHud();
+      return;
+    }
+    this.acc += deltaMs / 1000;
     const handBefore = this.world.players.player.hand.join();
     while (this.acc >= DT) {
       this.acc -= DT;
@@ -528,7 +573,7 @@ export class BattleScene extends Phaser.Scene {
     this.ghost.setVisible(false);
     this.zoneShade.setVisible(false);
     this.selected = null;
-    this.tooltip.setVisible(false);
+    music.setIntense(false);
     const won = result === 'player';
     const w = this.world;
     this.add.rectangle(ARENA_W / 2, ARENA_H / 2, ARENA_W, 180, 0x000000, 0.65).setDepth(400);
@@ -549,16 +594,6 @@ export class BattleScene extends Phaser.Scene {
   }
 }
 
-function kwColor(kw: keyof typeof KEYWORDS): number {
-  switch (kw) {
-    case 'Tank': return 0xc9a46a;
-    case 'Swarm': return 0xe08a5a;
-    case 'Flying': return 0x8ec5ea;
-    case 'Ranged': return 0xb7d98a;
-    case 'Melee': return 0xd8cfb8;
-    case 'Buildings only': return 0xe3b04b;
-    case 'Air first': return 0x9fd6f0;
-    case 'Ambush': return 0xd9a0e0;
-    default: return 0xcfd8c0;
-  }
+function onField(p: Phaser.Input.Pointer): boolean {
+  return p.worldX >= 0 && p.worldX < ARENA_W && p.worldY >= 0 && p.worldY < ARENA_H;
 }

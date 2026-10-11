@@ -11,7 +11,7 @@ export const KEYWORDS = {
   'Ground only': 'Can\'t attack flying bugs.',
   'Buildings only': 'Ignores bugs and marches straight for towers.',
   'Air first': 'Goes after flying bugs before anything else.',
-  Ambush: 'Its first strike deals triple damage.',
+  Ambush: 'Its first strike deals double damage.',
 } as const;
 
 export type Keyword = keyof typeof KEYWORDS;
@@ -44,30 +44,30 @@ export const CARDS: Record<string, CardDef> = {
   },
   rhino: {
     id: 'rhino', name: 'Rhinoceros Beetle', cost: 9, count: 1,
-    unit: unit('rhino', 'Rhinoceros Beetle', { hp: 1900, damage: 230, hitSpeed: 1.4, range: RANGE.melee, speed: SPEED.fast, radius: 0.55, flying: false, targets: 'ground' }),
+    unit: unit('rhino', 'Rhinoceros Beetle', { hp: 1300, damage: 160, hitSpeed: 1.5, range: RANGE.melee, speed: SPEED.fast, radius: 0.55, flying: false, targets: 'ground' }),
     keywords: ['Tank', 'Melee', 'Ground only'],
     blurb: 'Fast for its size and hits hard.',
     comingLater: 'Charge and horn flip.',
   },
   goliath: {
     id: 'goliath', name: 'Goliath Beetle', cost: 14, count: 1,
-    unit: unit('goliath', 'Goliath Beetle', { hp: 4400, damage: 300, hitSpeed: 2.0, range: RANGE.melee, speed: SPEED.slow, radius: 0.75, flying: false, targets: 'ground' }),
+    unit: unit('goliath', 'Goliath Beetle', { hp: 3100, damage: 140, hitSpeed: 2.0, range: RANGE.melee, speed: SPEED.slow, radius: 0.75, flying: false, targets: 'ground' }),
     keywords: ['Tank', 'Melee', 'Ground only'],
     blurb: 'The heaviest bug in the garden. Huge health, slow crushing hits.',
     comingLater: 'Shell that cracks off at half health.',
   },
   fireants: {
     id: 'fireants', name: 'Fire Ant Squad', cost: 5, count: 6,
-    unit: unit('fireant', 'Fire Ant', { hp: 85, damage: 32, hitSpeed: 0.8, range: RANGE.melee, speed: SPEED.fast, radius: 0.25, flying: false, targets: 'ground' }),
+    unit: unit('fireant', 'Fire Ant', { hp: 85, damage: 32, hitSpeed: 0.8, range: RANGE.melee, speed: 1.5, radius: 0.25, flying: false, targets: 'ground' }),
     keywords: ['Swarm', 'Melee', 'Ground only'],
     blurb: 'Six fast ants that swarm a single target.',
     comingLater: 'Stacking Venom.',
   },
   mantis: {
     id: 'mantis', name: 'Praying Mantis', cost: 7, count: 1,
-    unit: unit('mantis', 'Praying Mantis', { hp: 1100, damage: 170, hitSpeed: 1.3, range: RANGE.melee, speed: SPEED.medium, radius: 0.5, flying: false, targets: 'both', firstStrikeMult: 3 }),
+    unit: unit('mantis', 'Praying Mantis', { hp: 800, damage: 140, hitSpeed: 1.3, range: RANGE.melee, speed: SPEED.medium, radius: 0.5, flying: false, targets: 'both', firstStrikeMult: 2 }),
     keywords: ['Melee', 'Hits air', 'Ambush'],
-    blurb: 'Snatches flyers out of the air. Opens with a triple-damage strike.',
+    blurb: 'Snatches flyers out of the air. Opens with a double-damage strike.',
     comingLater: 'Camouflage while waiting.',
   },
   spitter: {
@@ -79,7 +79,7 @@ export const CARDS: Record<string, CardDef> = {
   },
   assassin: {
     id: 'assassin', name: 'Assassin Bug', cost: 8, count: 1,
-    unit: unit('assassin', 'Assassin Bug', { hp: 650, damage: 260, hitSpeed: 1.5, range: RANGE.short, speed: SPEED.medium, radius: 0.45, flying: false, targets: 'both' }),
+    unit: unit('assassin', 'Assassin Bug', { hp: 450, damage: 260, hitSpeed: 1.5, range: RANGE.short, speed: SPEED.medium, radius: 0.45, flying: false, targets: 'both' }),
     keywords: ['Ranged', 'Hits air'],
     blurb: 'Fragile, but its long beak stabs hard from range 3.',
     comingLater: 'Stacking Venom.',
@@ -93,20 +93,20 @@ export const CARDS: Record<string, CardDef> = {
   },
   dragonfly: {
     id: 'dragonfly', name: 'Dragonfly', cost: 6, count: 1,
-    unit: unit('dragonfly', 'Dragonfly', { hp: 760, damage: 120, hitSpeed: 1.0, range: RANGE.melee, speed: SPEED.veryFast, radius: 0.45, flying: true, targets: 'both', prefersAir: true }),
+    unit: unit('dragonfly', 'Dragonfly', { hp: 640, damage: 120, hitSpeed: 1.0, range: RANGE.melee, speed: SPEED.veryFast, radius: 0.45, flying: true, targets: 'both', prefersAir: true }),
     keywords: ['Flying', 'Melee', 'Air first'],
     blurb: 'Fastest bug in the game. Hunts other flyers first.',
   },
   termites: {
-    id: 'termites', name: 'Termite Wave', cost: 6, count: 5,
-    unit: unit('termite', 'Termite', { hp: 200, damage: 60, hitSpeed: 1.0, range: RANGE.melee, speed: SPEED.medium, radius: 0.28, flying: false, targets: 'buildings' }),
+    id: 'termites', name: 'Termite Wave', cost: 6, count: 4,
+    unit: unit('termite', 'Termite', { hp: 120, damage: 60, hitSpeed: 0.5, range: RANGE.melee, speed: 1.5, radius: 0.28, flying: false, targets: 'buildings' }),
     keywords: ['Swarm', 'Buildings only', 'Melee'],
-    blurb: 'Five termites that ignore bugs and chew on towers.',
+    blurb: 'Four termites that ignore bugs and chew on towers.',
     comingLater: 'Damage grows the longer they stay latched on.',
   },
   bolas: {
     id: 'bolas', name: 'Bolas Spider', cost: 7, count: 1,
-    unit: unit('bolas', 'Bolas Spider', { hp: 700, damage: 140, hitSpeed: 1.6, range: RANGE.mid, speed: SPEED.medium, radius: 0.45, flying: false, targets: 'both' }),
+    unit: unit('bolas', 'Bolas Spider', { hp: 500, damage: 140, hitSpeed: 1.6, range: RANGE.mid, speed: SPEED.medium, radius: 0.45, flying: false, targets: 'both' }),
     keywords: ['Ranged', 'Hits air'],
     blurb: 'Mid-range thrower that covers your push from behind.',
     comingLater: 'Sticky bola that nets up to three bugs.',
