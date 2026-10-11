@@ -572,7 +572,7 @@ export class BattleScene extends Phaser.Scene {
             const tv = this.towerViews.get(target.id);
             if (tv) tv.flash = 0.08;
             this.chips(ev.x * TILE, ev.y * TILE, target.role === 'nest' ? 'straw' : 'shard', 2, 14);
-            sfx.play('hitTower', { pan: this.pan(ev.x) });
+            sfx.play(target.role === 'nest' ? 'hitNest' : 'hitTower', { pan: this.pan(ev.x) });
           } else {
             const uv = this.unitViews.get(ev.targetId);
             if (uv) uv.flash = 0.07;
@@ -607,7 +607,8 @@ export class BattleScene extends Phaser.Scene {
         }
         case 'strike': {
           const src = w.entities.find((e) => e.id === ev.sourceId);
-          sfx.play('bite', { pan: src ? this.pan(src.x) : 0 });
+          const heavy = src?.kind === 'unit' && src.stats.mass >= 8;
+          sfx.play(heavy ? 'thump' : 'bite', { pan: src ? this.pan(src.x) : 0 });
           break;
         }
         case 'wake': {

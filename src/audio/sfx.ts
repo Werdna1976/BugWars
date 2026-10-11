@@ -4,7 +4,7 @@
 // doesn't turn into noise.
 
 export type SfxName =
-  | 'deploy' | 'bite' | 'seed' | 'honey' | 'spit' | 'spray' | 'blast' | 'hitTower'
+  | 'deploy' | 'bite' | 'thump' | 'hitNest' | 'seed' | 'honey' | 'spit' | 'spray' | 'blast' | 'hitTower'
   | 'squish' | 'towerFall' | 'nestWake' | 'click' | 'tick' | 'go' | 'victory' | 'defeat';
 
 interface Spec {
@@ -16,13 +16,15 @@ interface Spec {
 
 const SPECS: Record<SfxName, Spec> = {
   deploy: { files: ['deploy'], volume: 0.5, minGap: 0.05, pitch: 0.08 },
-  bite: { files: ['bite1', 'bite2', 'bite3'], volume: 0.32, minGap: 0.06, pitch: 0.15 },
-  seed: { files: ['seed'], volume: 0.22, minGap: 0.08, pitch: 0.1 },
+  bite: { files: ['bite1', 'bite2', 'bite3'], volume: 0.3, minGap: 0.06, pitch: 0.15 },
+  thump: { files: ['thump1', 'thump2'], volume: 0.35, minGap: 0.1, pitch: 0.1 },
+  hitNest: { files: ['hitNest1', 'hitNest2'], volume: 0.3, minGap: 0.09, pitch: 0.12 },
+  seed: { files: ['seed'], volume: 0.2, minGap: 0.08, pitch: 0.1 },
   honey: { files: ['honey'], volume: 0.3, minGap: 0.1, pitch: 0.08 },
   spit: { files: ['spit'], volume: 0.3, minGap: 0.06, pitch: 0.12 },
   spray: { files: ['spray'], volume: 0.35, minGap: 0.08, pitch: 0.1 },
   blast: { files: ['blast'], volume: 0.5, minGap: 0.08, pitch: 0.1 },
-  hitTower: { files: ['hitTower1', 'hitTower2'], volume: 0.28, minGap: 0.09, pitch: 0.12 },
+  hitTower: { files: ['hitTower1', 'hitTower2'], volume: 0.22, minGap: 0.09, pitch: 0.12 },
   squish: { files: ['squish1', 'squish2'], volume: 0.4, minGap: 0.05, pitch: 0.15 },
   towerFall: { files: ['towerFall'], volume: 0.75, minGap: 0.3, pitch: 0.05 },
   nestWake: { files: ['nestWake'], volume: 0.55, minGap: 0.5, pitch: 0 },
@@ -142,6 +144,8 @@ function synth(ctx: AudioContext, name: SfxName, out: AudioNode, rate: number) {
   switch (name) {
     case 'deploy': noise(0.18, 600, 0.8, 0.8, 'lowpass'); tone('sine', 220, 110, 0.15, 0.5); break;
     case 'bite': noise(0.05, 2400, 2, 0.9); tone('square', 900, 300, 0.04, 0.2); break;
+    case 'thump': tone('sine', 160, 60, 0.12, 0.9); noise(0.06, 500, 1, 0.5); break;
+    case 'hitNest': noise(0.08, 900, 1.5, 0.7); break;
     case 'seed': tone('triangle', 900, 400, 0.06, 0.5); noise(0.04, 3000, 1, 0.3); break;
     case 'honey': tone('sine', 400, 180, 0.12, 0.6); break;
     case 'spit': noise(0.08, 1800, 3, 0.8); tone('sine', 700, 1200, 0.05, 0.3); break;
