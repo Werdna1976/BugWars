@@ -32,6 +32,7 @@ jobs:
           echo "::warning::$(wc -l < packs/LISTING.txt) files, $(du -sh packs | cut -f1)"
       - name: Push to asset-staging branch
         run: |
+          trap 'echo "::error::failed at line $LINENO: $BASH_COMMAND"' ERR
           cd packs
           find . -type f ! -iname '*.ogg' ! -iname '*.wav' ! -iname '*.mp3' ! -name LISTING.txt ! -iname 'license*' -delete
           git init -q
