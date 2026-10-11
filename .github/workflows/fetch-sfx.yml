@@ -34,9 +34,13 @@ jobs:
         run: |
           cd packs
           find . -type f ! -iname '*.ogg' ! -iname '*.wav' ! -iname '*.mp3' ! -name LISTING.txt ! -iname 'license*' -delete
-          git init -q -b asset-staging
+          git init -q
+          git checkout -q -b asset-staging
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -q -m "Kenney sound packs (CC0) for picking" || { echo "::error::nothing to commit"; exit 1; }
-          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" asset-staging
+          git commit -q -m "Kenney sound packs (CC0) for picking" 2>&1 | tail -2 | sed 's/^/::warning::commit: /'
+          if ! out=$(git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" HEAD:refs/heads/asset-staging 2>&1); then
+            echo "$out" | tail -4 | sed 's/^/::error::push: /'
+            exit 1
+          fi
