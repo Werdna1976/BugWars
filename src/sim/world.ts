@@ -8,6 +8,15 @@ import { PlayerState, mulberry32 } from './player';
 
 export const DEPLOY_SECONDS = 1;
 
+export const MATCH = {
+  regulation: 180, // seconds
+  doubleNectarAt: 60, // seconds left when refill doubles
+  overtime: 60, // sudden death: first tower down wins
+} as const;
+
+export type Phase = 'regulation' | 'overtime' | 'over';
+export type Result = Side | 'draw';
+
 interface Body {
   id: number;
   side: Side;
@@ -72,12 +81,16 @@ export class World {
   readonly projectiles: Projectile[] = [];
   events: WorldEvent[] = [];
   tick = 0;
-  winner: Side | null = null;
+  winner: Result | null = null;
+  phase: Phase = 'regulation';
+  timeLeft: number = MATCH.regulation;
+  readonly rng: () => number;
   readonly players: Record<Side, PlayerState>;
   private nextId = 1;
 
   constructor(seed = 1, decks: Record<Side, Deck> = { player: PLAYER_DECK, enemy: AI_DECK }) {
     const rng = mulberry32(seed);
+    this.rng = rng;
     this.players = { player: new PlayerState(decks.player, rng), enemy: new PlayerState(decks.enemy, rng) };
     for (const side of ['player', 'enemy'] as Side[]) {
       const top = side === 'enemy';
@@ -166,8 +179,9 @@ export class World {
 
   step() {
     if (this.winner) return;
-    this.players.player.refill(DT);
-    this.players.enemy.refill(DT);
+    const rate = this.doubleNectar ? 2 : 1;
+    this.players.player.refill(DT, rate);
+    this.players.enemy.refill(DT, rate);
     this.tick++;
     for (const e of this.entities) {
       e.prevX = e.x;
@@ -182,6 +196,46 @@ export class World {
     this.separate();
     this.stepProjectiles();
     this.reap();
+    this.stepClock();
+  }
+
+  get doubleNectar(): boolean {
+    return this.phase === 'overtime' || this.timeLeft <= MATCH.doubleNectarAt;
+  }
+
+  // Towers knocked down by each side (a Nest counts as all three).
+  crowns(side: Side): number {
+    const theirs = this.towers.filter((t) => t.side !== side);
+    if (theirs.some((t) => t.role === 'nest' && !t.alive)) return 3;
+    return theirs.filter((t) => !t.alive).length;
+  }
+
+  private stepClock() {
+    if (this.winner) return;
+    const lead = this.crowns('player') - this.crowns('enemy');
+    if (this.phase === 'overtime' && lead !== 0) {
+      this.finish(lead > 0 ? 'player' : 'enemy');
+      return;
+    }
+    this.timeLeft = Math.max(0, this.timeLeft - DT);
+    if (this.timeLeft > 0) return;
+    if (lead !== 0) {
+      this.finish(lead > 0 ? 'player' : 'enemy');
+    } else if (this.phase === 'regulation') {
+      this.phase = 'overtime';
+      this.timeLeft = MATCH.overtime;
+    } else {
+      // Still level after overtime: the side whose weakest tower is healthier wins.
+      const weakest = (side: Side) => Math.min(...this.towers.filter((t) => t.side === side && t.alive).map((t) => t.hp / t.maxHp));
+      const p = weakest('player');
+      const e = weakest('enemy');
+      this.finish(p === e ? 'draw' : p > e ? 'player' : 'enemy');
+    }
+  }
+
+  private finish(result: Result) {
+    this.winner = result;
+    this.phase = 'over';
   }
 
   // Edge-to-edge distance between two bodies.
@@ -380,7 +434,7 @@ export class World {
       if (e.kind === 'tower') {
         this.arena.setFootprint(e.id, e.col, e.row, e.stats.size, false);
         if (e.role === 'nest') {
-          this.winner = otherSide(e.side);
+          this.finish(otherSide(e.side));
         } else {
           for (const t of this.towers) if (t.side === e.side && t.role === 'nest') t.active = true;
         }

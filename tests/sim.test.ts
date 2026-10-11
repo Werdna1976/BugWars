@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Arena } from '../src/sim/arena';
 import { CROSSINGS, PUDDLE_ROWS } from '../src/sim/constants';
 import { World } from '../src/sim/world';
+import { SimpleAi } from '../src/sim/ai';
 import { TEST_UNITS } from '../src/data/units';
 import { AI_DECK, PLAYER_DECK, validateDeck } from '../src/data/decks';
 import { CARDS } from '../src/data/cards';
@@ -110,5 +111,59 @@ describe('decks and cards', () => {
     const hornet = w.spawnUnit('enemy', { ...CARDS.hornet.unit, speed: 0 }, 11.5, 24);
     for (let i = 0; i < 40; i++) w.step();
     expect(df.targetId).toBe(hornet.id);
+  });
+});
+
+describe('match flow', () => {
+  const run = (w: World, seconds: number) => {
+    for (let i = 0; i < seconds * 20 && !w.winner; i++) w.step();
+  };
+
+  it('Nectar refill doubles in the last minute', () => {
+    const w = new World(1);
+    run(w, 119);
+    expect(w.doubleNectar).toBe(false);
+    run(w, 2);
+    expect(w.doubleNectar).toBe(true);
+  });
+
+  it('a level game goes to overtime, then the first tower down wins', () => {
+    const w = new World(1);
+    run(w, 181);
+    expect(w.phase).toBe('overtime');
+    const outpost = w.towers.find((t) => t.side === 'player' && t.role === 'outpost')!;
+    outpost.hp = 0;
+    w.step();
+    expect(w.winner).toBe('enemy');
+  });
+
+  it('more towers at the buzzer wins outright', () => {
+    const w = new World(1);
+    w.towers.find((t) => t.side === 'enemy' && t.role === 'outpost')!.hp = 0;
+    run(w, 181);
+    expect(w.winner).toBe('player');
+    expect(w.phase).toBe('over');
+  });
+
+  it('still level after overtime: healthier weakest tower wins', () => {
+    const w = new World(1);
+    w.towers.find((t) => t.side === 'enemy' && t.role === 'outpost')!.hp = 500;
+    run(w, 245);
+    expect(w.winner).toBe('player');
+  });
+
+  it('AI vs AI matches always finish and the AI plays cards', () => {
+    const w = new World(11);
+    const a = new SimpleAi(w, 'player');
+    const b = new SimpleAi(w, 'enemy');
+    let played = 0;
+    for (let i = 0; i < 20 * 300 && !w.winner; i++) {
+      a.step();
+      b.step();
+      w.step();
+      played += w.drainEvents().filter((e) => e.type === 'deploy').length;
+    }
+    expect(w.winner).not.toBeNull();
+    expect(played).toBeGreaterThan(20);
   });
 });

@@ -6,7 +6,7 @@ Play: https://werdna1976.github.io/BugWars/
 
 ## How to play
 
-Your Nectar refills over time. Tap a card, then tap your half of the field to drop it there, or drag the card onto the field. Hover a card (or tap it) to see what the bug does. Ground bugs walk around the puddles through the two dry crossings; flyers go straight over. Knock down the enemy Nest to win.
+Your Nectar refills over time. Tap a card, then tap your half of the field to drop it there, or drag the card onto the field. Hover a card (or tap it) to see what the bug does. Ground bugs walk around the puddles through the two dry crossings; flyers go straight over. Knock down the enemy Nest to win, or take more towers than the AI in 3 minutes. Nectar refills twice as fast in the last minute. A tie goes to one minute of sudden-death overtime, then to whoever's weakest tower has more health.
 
 Both sides use fixed 10-card decks (`src/data/decks.ts`). A deck may contain up to three cards twice, so at least seven different bugs.
 
@@ -17,7 +17,7 @@ npm install
 npm run dev
 ```
 
-Then open the URL Vite prints. `npm test` runs the simulation tests.
+Then open the URL Vite prints. `npm test` runs the simulation tests. `npx vite-node scripts/simulate.ts 50` plays 50 AI-vs-AI matches and prints win rates.
 
 ## Layout
 

@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { COLS, DT, ROWS, Side } from '../sim/constants';
-import { Entity, Unit, World } from '../sim/world';
+import { Entity, Result, Unit, World } from '../sim/world';
+import { SimpleAi } from '../sim/ai';
 import { HAND_SIZE, NECTAR } from '../sim/player';
 import { CARDS, CardDef, KEYWORDS, RANGE_LABEL, SPEED_LABEL } from '../data/cards';
 import { TILE, bakeTextures } from './textures';
@@ -55,7 +56,10 @@ export class BattleScene extends Phaser.Scene {
   private selected: number | null = null;
   private dragging = false;
   private hovered: number | null = null;
-  private aiThink = 3;
+  private ai!: SimpleAi;
+  private clockText!: Phaser.GameObjects.Text;
+  private crownText!: Record<Side, Phaser.GameObjects.Text>;
+  private announced = new Set<string>();
   private ended = false;
 
   constructor() {
@@ -65,6 +69,8 @@ export class BattleScene extends Phaser.Scene {
   create() {
     if (!this.textures.exists('beetle')) bakeTextures(this);
     this.world = new World(Math.floor(Math.random() * 1e9));
+    this.ai = new SimpleAi(this.world, 'enemy');
+    this.announced.clear();
     this.acc = 0;
     this.ended = false;
     this.selected = null;
@@ -90,6 +96,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.tooltip = this.add.container(0, 0).setDepth(500).setVisible(false);
     this.drawPanel();
+    this.drawHud();
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.updateGhost(p));
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onArenaDown(p));
@@ -348,17 +355,49 @@ export class BattleScene extends Phaser.Scene {
     if (p.y < ARENA_H) this.tryDeploy(p);
   }
 
-  // Stand-in opponent: plays a random affordable card into a random lane. Step 3 replaces it.
-  private stepDummyAi() {
-    this.aiThink -= DT;
-    if (this.aiThink > 0) return;
-    this.aiThink = 1;
-    const ai = this.world.players.enemy;
-    const options = ai.hand.map((id, i) => ({ i, card: CARDS[id] })).filter((o) => o.card.cost <= ai.nectar);
-    if (!options.length || ai.nectar < 9) return;
-    const pick = options[Math.floor(Math.random() * options.length)];
-    const x = Math.random() < 0.5 ? 3.5 : COLS - 3.5;
-    this.world.playCard('enemy', pick.i, x + (Math.random() - 0.5) * 2, 9 + Math.random() * 4);
+  // ---------- Match HUD ----------
+
+  private drawHud() {
+    const style = { fontFamily: FONT, fontSize: '20px', color: '#ffffff', fontStyle: 'bold' };
+    const cx = ARENA_W - 66;
+    this.add.rectangle(cx, 50, 116, 84, 0x000000, 0.45).setDepth(250);
+    this.clockText = this.add.text(cx, 24, '3:00', style).setOrigin(0.5).setDepth(251);
+    const small = { fontFamily: FONT, fontSize: '14px', fontStyle: 'bold' };
+    this.crownText = {
+      enemy: this.add.text(cx, 48, '', { ...small, color: '#ffb3b5' }).setOrigin(0.5).setDepth(251),
+      player: this.add.text(cx, 66, '', { ...small, color: '#b3d1ff' }).setOrigin(0.5).setDepth(251),
+    };
+    this.add.text(cx, 84, '', { fontFamily: FONT, fontSize: '12px', color: '#ffe9a8' })
+      .setOrigin(0.5).setDepth(251).setName('phase');
+  }
+
+  private updateHud() {
+    const w = this.world;
+    const secs = Math.ceil(w.timeLeft);
+    this.clockText.setText(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`);
+    this.clockText.setColor(w.timeLeft <= 10 && w.phase !== 'over' ? '#ff8a8a' : '#ffffff');
+    const phase = this.children.getByName('phase') as Phaser.GameObjects.Text;
+    phase.setText(w.phase === 'overtime' ? 'Overtime' : w.doubleNectar ? 'Nectar x2' : '');
+    this.crownText.enemy.setText(`AI took ${w.crowns('enemy')}`);
+    this.crownText.player.setText(`You took ${w.crowns('player')}`);
+
+    if (w.doubleNectar && w.phase === 'regulation') this.announce('double', 'Double Nectar!');
+    if (w.phase === 'overtime') this.announce('overtime', 'Overtime! Next tower wins');
+  }
+
+  private announce(key: string, text: string) {
+    if (this.announced.has(key)) return;
+    this.announced.add(key);
+    const banner = this.add.text(ARENA_W / 2, ARENA_H / 2, text, {
+      fontFamily: FONT, fontSize: '34px', color: '#ffe9a8', fontStyle: 'bold', stroke: '#2a1a05', strokeThickness: 6,
+    }).setOrigin(0.5).setDepth(450).setScale(0.6).setAlpha(0);
+    this.tweens.chain({
+      targets: banner,
+      tweens: [
+        { scale: 1, alpha: 1, duration: 300, ease: 'Back.Out' },
+        { alpha: 0, delay: 1600, duration: 400, onComplete: () => banner.destroy() },
+      ],
+    });
   }
 
   // ---------- Loop ----------
@@ -369,13 +408,14 @@ export class BattleScene extends Phaser.Scene {
     while (this.acc >= DT) {
       this.acc -= DT;
       if (!this.ended) {
-        this.stepDummyAi();
+        this.ai.step();
         this.world.step();
       }
     }
     this.playEvents();
     if (handBefore !== this.world.players.player.hand.join()) this.refreshCards();
     this.updatePanel();
+    this.updateHud();
     this.render(this.acc / DT);
     if (this.world.winner && !this.ended) this.showResult(this.world.winner);
   }
@@ -483,16 +523,23 @@ export class BattleScene extends Phaser.Scene {
     g.fillStyle(SIDE_COLOR[e.side], 1).fillRect(cx - w / 2, y, w * pct, 5);
   }
 
-  private showResult(winner: Side) {
+  private showResult(result: Result) {
     this.ended = true;
     this.ghost.setVisible(false);
     this.zoneShade.setVisible(false);
-    const won = winner === 'player';
+    this.selected = null;
+    this.tooltip.setVisible(false);
+    const won = result === 'player';
+    const w = this.world;
     this.add.rectangle(ARENA_W / 2, ARENA_H / 2, ARENA_W, 180, 0x000000, 0.65).setDepth(400);
-    this.add.text(ARENA_W / 2, ARENA_H / 2 - 30, won ? 'Victory!' : 'Defeat', {
-      fontFamily: FONT, fontSize: '48px', color: won ? '#f2c12e' : '#e5484d', fontStyle: 'bold',
+    this.add.text(ARENA_W / 2, ARENA_H / 2 - 44, result === 'draw' ? 'Draw' : won ? 'Victory!' : 'Defeat', {
+      fontFamily: FONT, fontSize: '48px', color: result === 'draw' ? '#ffffff' : won ? '#f2c12e' : '#e5484d', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(401);
-    const again = this.add.text(ARENA_W / 2, ARENA_H / 2 + 40, 'Play again', {
+    const tied = w.crowns('player') === w.crowns('enemy');
+    const detail = `Towers ${w.crowns('player')} : ${w.crowns('enemy')}` + (tied && result !== 'draw' ? '  (decided by tower health)' : '');
+    this.add.text(ARENA_W / 2, ARENA_H / 2 + 2, detail, { fontFamily: FONT, fontSize: '16px', color: '#e8e0cc' })
+      .setOrigin(0.5).setDepth(401);
+    const again = this.add.text(ARENA_W / 2, ARENA_H / 2 + 50, 'Play again', {
       fontFamily: FONT, fontSize: '24px', color: '#ffffff', backgroundColor: '#3f5632', padding: { x: 16, y: 8 },
     }).setOrigin(0.5).setDepth(401).setInteractive({ useHandCursor: true });
     again.on('pointerdown', (_p: unknown, _x: unknown, _y: unknown, ev: Phaser.Types.Input.EventData) => {

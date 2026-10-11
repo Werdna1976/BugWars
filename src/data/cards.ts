@@ -79,7 +79,7 @@ export const CARDS: Record<string, CardDef> = {
   },
   assassin: {
     id: 'assassin', name: 'Assassin Bug', cost: 8, count: 1,
-    unit: unit('assassin', 'Assassin Bug', { hp: 560, damage: 230, hitSpeed: 1.5, range: RANGE.short, speed: SPEED.medium, radius: 0.45, flying: false, targets: 'both' }),
+    unit: unit('assassin', 'Assassin Bug', { hp: 650, damage: 260, hitSpeed: 1.5, range: RANGE.short, speed: SPEED.medium, radius: 0.45, flying: false, targets: 'both' }),
     keywords: ['Ranged', 'Hits air'],
     blurb: 'Fragile, but its long beak stabs hard from range 3.',
     comingLater: 'Stacking Venom.',
@@ -92,14 +92,14 @@ export const CARDS: Record<string, CardDef> = {
     comingLater: 'Venom stings.',
   },
   dragonfly: {
-    id: 'dragonfly', name: 'Dragonfly', cost: 7, count: 1,
-    unit: unit('dragonfly', 'Dragonfly', { hp: 640, damage: 105, hitSpeed: 1.0, range: RANGE.melee, speed: SPEED.veryFast, radius: 0.45, flying: true, targets: 'both', prefersAir: true }),
+    id: 'dragonfly', name: 'Dragonfly', cost: 6, count: 1,
+    unit: unit('dragonfly', 'Dragonfly', { hp: 760, damage: 120, hitSpeed: 1.0, range: RANGE.melee, speed: SPEED.veryFast, radius: 0.45, flying: true, targets: 'both', prefersAir: true }),
     keywords: ['Flying', 'Melee', 'Air first'],
     blurb: 'Fastest bug in the game. Hunts other flyers first.',
   },
   termites: {
-    id: 'termites', name: 'Termite Wave', cost: 7, count: 5,
-    unit: unit('termite', 'Termite', { hp: 120, damage: 50, hitSpeed: 1.0, range: RANGE.melee, speed: SPEED.medium, radius: 0.28, flying: false, targets: 'buildings' }),
+    id: 'termites', name: 'Termite Wave', cost: 6, count: 5,
+    unit: unit('termite', 'Termite', { hp: 200, damage: 60, hitSpeed: 1.0, range: RANGE.melee, speed: SPEED.medium, radius: 0.28, flying: false, targets: 'buildings' }),
     keywords: ['Swarm', 'Buildings only', 'Melee'],
     blurb: 'Five termites that ignore bugs and chew on towers.',
     comingLater: 'Damage grows the longer they stay latched on.',
