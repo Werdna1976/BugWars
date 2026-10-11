@@ -250,4 +250,40 @@ export function bakeTextures(scene: Phaser.Scene) {
     g.fillStyle(0xe8f0d0, 1).fillCircle(5, 5, 4);
     g.fillStyle(0xffffff, 0.8).fillCircle(4, 4, 1.5);
   });
+
+  // Dung beetle pushing its ball (ball sits in front, at the right).
+  bake(scene, 'dung', 64, 56, (g) => {
+    legs(g, 22, 28, 7, 17, 0x111111);
+    g.fillStyle(0x1c1c22, 1).fillEllipse(20, 28, 28, 26);
+    g.fillStyle(0x2c2c36, 1).fillEllipse(18, 22, 18, 8).fillEllipse(18, 34, 18, 8);
+    g.lineStyle(1.5, 0x0a0a0a, 1).lineBetween(6, 28, 33, 28);
+    g.fillStyle(0x111111, 1).fillEllipse(35, 28, 10, 14); // head
+    g.fillStyle(0x6b4a2a, 1).fillCircle(51, 28, 12); // dung ball
+    g.fillStyle(0x7d5934, 1).fillCircle(48, 24, 5).fillCircle(54, 32, 4);
+    g.fillStyle(0x553a20, 1).fillCircle(53, 23, 2.5).fillCircle(46, 33, 2);
+    shine(g, 15, 20, 12, 4);
+  });
+
+  bake(scene, 'bombardier', 52, 52, (g) => {
+    legs(g, 24, 26, 6, 15, 0x1a1a1a);
+    antennae(g, 39, 26, 9, 0x1a1a1a);
+    g.fillStyle(0x1f2b4a, 1).fillEllipse(20, 26, 26, 22); // dark blue wing cases
+    g.fillStyle(0xe8a33a, 1).fillEllipse(14, 21, 8, 5).fillEllipse(14, 31, 8, 5).fillEllipse(24, 26, 5, 9);
+    g.lineStyle(1.5, 0x0f1526, 1).lineBetween(8, 26, 32, 26);
+    g.fillStyle(0xd9762a, 1).fillEllipse(35, 26, 12, 13); // orange thorax and head
+    g.fillStyle(0xe8873a, 1).fillCircle(42, 26, 5);
+    g.fillStyle(0xfff0a0, 0.9).fillCircle(5, 26, 3); // hot spray nozzle
+    shine(g, 17, 19, 12, 4);
+  });
+
+  bake(scene, 'spray', 14, 14, (g) => {
+    g.fillStyle(0xff8a1f, 0.9).fillCircle(7, 7, 6);
+    g.fillStyle(0xfff0a0, 1).fillCircle(6, 6, 3);
+  });
+
+  bake(scene, 'blast', 64, 64, (g) => {
+    g.fillStyle(0xff7a1a, 0.55).fillCircle(32, 32, 32);
+    g.fillStyle(0xffb347, 0.75).fillCircle(32, 32, 22);
+    g.fillStyle(0xfff3b0, 0.95).fillCircle(32, 32, 11);
+  });
 }

@@ -13,6 +13,7 @@ export function kwColor(kw: Keyword): number {
     case 'Buildings only': return 0xe3b04b;
     case 'Air first': return 0x9fd6f0;
     case 'Ambush': return 0xd9a0e0;
+    case 'Area damage': return 0xf2a04a;
     default: return 0xcfd8c0;
   }
 }
@@ -71,6 +72,7 @@ export function drawCardDetails(
     ['Speed', SPEED_LABEL(u.speed)],
     ['Attacks', TARGETS_LABEL[u.targets]],
   ];
+  if (u.splashRadius) rows.splice(3, 0, ['Blast radius', `${u.splashRadius} tiles`]);
   for (const [label, value] of rows) {
     add(scene.add.text(0, y, label, { fontFamily: FONT, fontSize: '16px', color: '#9fb08a' }));
     add(scene.add.text(118, y, value, {

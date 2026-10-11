@@ -1,147 +1,80 @@
-// Light procedural background music built from Web Audio oscillators, so the
-// game ships without audio files. Calm loop during the match; faster, with an
-// arpeggio and a beat, in overtime.
+// Background music. Tracks by Kevin MacLeod (incompetech.com), licensed under
+// Creative Commons: By Attribution 4.0 (http://creativecommons.org/licenses/by/4.0/).
+// See CREDITS.md.
+//   match.mp3:    "Monkeys Spinning Monkeys"
+//   overtime.mp3: "Pixel Peeker Polka - faster"
 
-const CHORDS = [
-  [48, 52, 55], // C
-  [45, 48, 52], // Am
-  [41, 45, 48], // F
-  [43, 47, 50], // G
-];
-const PENTATONIC = [60, 62, 64, 67, 69, 72, 74, 76];
-// Melody rhythm per bar (16th-note steps that play) and a fixed contour, so it
-// sounds composed rather than random.
-const MELODY_STEPS = [0, 3, 6, 8, 10, 14];
-const CONTOURS = [
-  [2, 3, 4, 3, 2, 1],
-  [0, 1, 2, 4, 3, 2],
-  [5, 4, 3, 2, 3, 4],
-  [3, 2, 1, 0, 1, 2],
-];
+const VOLUME = 0.35;
+const FADE_MS = 800;
 
-const midiHz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
+function track(file: string): HTMLAudioElement {
+  const a = new Audio(`music/${file}`);
+  a.loop = true;
+  a.preload = 'auto';
+  a.volume = 0;
+  return a;
+}
 
 export class Music {
-  private ctx: AudioContext | null = null;
-  private master: GainNode | null = null;
-  private noise: AudioBuffer | null = null;
-  private timer: number | null = null;
-  private nextTime = 0;
-  private step = 0;
-  private intense = false;
+  private tracks: Record<'match' | 'overtime', HTMLAudioElement> | null = null;
+  private current: 'match' | 'overtime' = 'match';
+  private fades = new Map<HTMLAudioElement, number>();
+  private started = false;
   muted = false;
 
   // Browsers only allow audio after a user gesture, so call this from a click.
   start() {
-    if (!this.ctx) {
-      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!Ctx) return;
-      this.ctx = new Ctx();
-      this.master = this.ctx.createGain();
-      this.master.gain.value = this.muted ? 0 : 0.14;
-      this.master.connect(this.ctx.destination);
-      this.noise = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.2, this.ctx.sampleRate);
-      const data = this.noise.getChannelData(0);
-      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-    }
-    void this.ctx.resume();
-    if (this.timer !== null) return;
-    this.nextTime = this.ctx.currentTime + 0.1;
-    this.step = 0;
-    this.timer = window.setInterval(() => this.schedule(), 25);
+    this.tracks ??= { match: track('match.mp3'), overtime: track('overtime.mp3') };
+    if (this.started) return;
+    this.started = true;
+    this.play(this.current);
   }
 
-  stop() {
-    if (this.timer !== null) window.clearInterval(this.timer);
-    this.timer = null;
-  }
-
+  // Switches to the overtime track (or back), crossfading between them.
   setIntense(on: boolean) {
-    this.intense = on;
+    const next = on ? 'overtime' : 'match';
+    if (next === this.current) return;
+    const prev = this.current;
+    this.current = next;
+    if (!this.tracks || !this.started) return;
+    this.fade(this.tracks[prev], 0, () => this.tracks![prev].pause());
+    this.play(next);
+  }
+
+  // Restart from the top for a new match.
+  reset() {
+    if (this.tracks) for (const a of Object.values(this.tracks)) a.currentTime = 0;
+    this.setIntense(false);
   }
 
   toggleMute(): boolean {
     this.muted = !this.muted;
-    if (this.master && this.ctx) this.master.gain.setTargetAtTime(this.muted ? 0 : 0.14, this.ctx.currentTime, 0.05);
+    if (this.tracks) this.fade(this.tracks[this.current], this.muted ? 0 : VOLUME);
     return this.muted;
   }
 
-  private get stepSeconds() {
-    const bpm = this.intense ? 138 : 96;
-    return 60 / bpm / 4;
+  private play(name: 'match' | 'overtime') {
+    const a = this.tracks![name];
+    void a.play().catch(() => {
+      // Autoplay refused or file missing: stay silent.
+    });
+    this.fade(a, this.muted ? 0 : VOLUME);
   }
 
-  // Look ahead ~100ms and queue every 16th-note step that falls in that window.
-  private schedule() {
-    const ctx = this.ctx!;
-    while (this.nextTime < ctx.currentTime + 0.1) {
-      this.playStep(this.step, this.nextTime);
-      this.nextTime += this.stepSeconds;
-      this.step = (this.step + 1) % 64;
-    }
-  }
-
-  private playStep(step: number, t: number) {
-    const bar = Math.floor(step / 16);
-    const s = step % 16;
-    const chord = CHORDS[bar];
-
-    if (s === 0 || s === 8) this.tone(midiHz(chord[0] - 12), t, 0.45, 'triangle', 0.5);
-    if (s === 0) for (const n of chord) this.tone(midiHz(n), t, this.stepSeconds * 15, 'sine', 0.09);
-
-    const mi = MELODY_STEPS.indexOf(s);
-    if (mi >= 0) this.tone(midiHz(PENTATONIC[CONTOURS[bar][mi]]), t, 0.22, 'triangle', 0.22);
-
-    if (this.intense) {
-      // Rolling arpeggio, a soft kick on the beat and hi-hats on the off-beats.
-      this.tone(midiHz(chord[s % 3] + 12), t, 0.09, 'square', 0.035);
-      if (s % 4 === 0) this.kick(t);
-      if (s % 4 === 2) this.hat(t);
-    } else if (s % 8 === 4) {
-      this.hat(t, 0.05);
-    }
-  }
-
-  private tone(freq: number, t: number, dur: number, type: OscillatorType, vol: number) {
-    const ctx = this.ctx!;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(vol, t + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(gain).connect(this.master!);
-    osc.start(t);
-    osc.stop(t + dur + 0.05);
-  }
-
-  private kick(t: number) {
-    const ctx = this.ctx!;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.frequency.setValueAtTime(140, t);
-    osc.frequency.exponentialRampToValueAtTime(45, t + 0.12);
-    gain.gain.setValueAtTime(0.5, t);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
-    osc.connect(gain).connect(this.master!);
-    osc.start(t);
-    osc.stop(t + 0.2);
-  }
-
-  private hat(t: number, vol = 0.08) {
-    const ctx = this.ctx!;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'highpass';
-    filter.frequency.value = 7000;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(vol, t);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
-    src.connect(filter).connect(gain).connect(this.master!);
-    src.start(t);
-    src.stop(t + 0.06);
+  private fade(a: HTMLAudioElement, to: number, done?: () => void) {
+    window.clearInterval(this.fades.get(a));
+    const from = a.volume;
+    const t0 = performance.now();
+    const id = window.setInterval(() => {
+      const k = Math.min(1, (performance.now() - t0) / FADE_MS);
+      a.volume = from + (to - from) * k;
+      if (k === 1) {
+        window.clearInterval(id);
+        this.fades.delete(a);
+        done?.();
+      }
+    }, 30);
+    this.fades.set(a, id);
   }
 }
 

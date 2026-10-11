@@ -12,6 +12,7 @@ export const KEYWORDS = {
   'Buildings only': 'Ignores bugs and marches straight for towers.',
   'Air first': 'Goes after flying bugs before anything else.',
   Ambush: 'Its first strike deals double damage.',
+  'Area damage': 'Hits every enemy near its target at once. Shreds swarms.',
 } as const;
 
 export type Keyword = keyof typeof KEYWORDS;
@@ -103,6 +104,18 @@ export const CARDS: Record<string, CardDef> = {
     keywords: ['Swarm', 'Buildings only', 'Melee'],
     blurb: 'Four termites that ignore bugs and chew on towers.',
     comingLater: 'Damage grows the longer they stay latched on.',
+  },
+  dung: {
+    id: 'dung', name: 'Dung Beetle', cost: 9, count: 1,
+    unit: unit('dung', 'Dung Beetle', { hp: 2000, damage: 150, hitSpeed: 1.5, range: RANGE.melee, speed: 0.85, radius: 0.6, flying: false, targets: 'buildings' }),
+    keywords: ['Tank', 'Buildings only', 'Melee'],
+    blurb: 'Rolls its dung ball straight at towers and ignores everything else. Put shooters behind it.',
+  },
+  bombardier: {
+    id: 'bombardier', name: 'Bombardier Beetle', cost: 6, count: 1,
+    unit: unit('bombardier', 'Bombardier Beetle', { hp: 620, damage: 110, hitSpeed: 1.6, range: RANGE.short, speed: SPEED.medium, radius: 0.45, flying: false, targets: 'ground', splashRadius: 1.3 }),
+    keywords: ['Area damage', 'Ranged', 'Ground only'],
+    blurb: 'Fires a boiling chemical burst that splashes every ground bug near its target.',
   },
   bolas: {
     id: 'bolas', name: 'Bolas Spider', cost: 7, count: 1,

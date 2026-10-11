@@ -10,13 +10,13 @@ export interface Deck {
 
 export const PLAYER_DECK: Deck = {
   name: 'Beetle Rush',
-  cards: ['pillbug', 'pillbug', 'rhino', 'goliath', 'fireants', 'fireants', 'spitter', 'spitter', 'hornet', 'bolas'],
+  cards: ['pillbug', 'dung', 'rhino', 'goliath', 'fireants', 'fireants', 'spitter', 'bombardier', 'hornet', 'bolas'],
 };
 
 export const AI_DECK: Deck = {
   name: 'Sky Sting',
   // Tuned with scripts/simulate.ts to win about half its AI-vs-AI games against Beetle Rush.
-  cards: ['dragonfly', 'hornet', 'mantis', 'assassin', 'assassin', 'termites', 'termites', 'pillbug', 'goliath', 'spitter'],
+  cards: ['dragonfly', 'hornet', 'mantis', 'assassin', 'assassin', 'termites', 'termites', 'dung', 'goliath', 'bombardier'],
 };
 
 // Returns a list of rule violations (empty when the deck is legal).

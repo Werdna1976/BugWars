@@ -203,3 +203,39 @@ describe('towers', () => {
     for (const id of Object.keys(CARDS)) expect(soloDamage(id), id).toBeLessThan(outpostHp);
   });
 });
+
+describe('targeting', () => {
+  it('a shooter hitting a tower keeps shooting it when a bug shows up beside it', () => {
+    const w = new World(1);
+    const outpost = w.towers.find((t) => t.side === 'enemy' && t.role === 'outpost' && t.x < 9)!;
+    outpost.active = false; // keep the tower from killing the shooter during the test
+    const spider = w.spawnUnit('player', { ...CARDS.bolas.unit, hp: 100000 }, outpost.x, outpost.y + 6.5);
+    for (let i = 0; i < 20 * 4; i++) w.step();
+    expect(spider.targetId).toBe(outpost.id);
+    expect(spider.attacking).toBe(true);
+    w.spawnUnit('enemy', { ...CARDS.pillbug.unit, speed: 0 }, outpost.x + 2.5, outpost.y + 4);
+    for (let i = 0; i < 20 * 3; i++) w.step();
+    expect(spider.targetId).toBe(outpost.id);
+  });
+});
+
+describe('new units', () => {
+  it('Bombardier Beetle splashes a whole swarm, not just its target', () => {
+    const w = new World(1);
+    w.spawnUnit('player', { ...CARDS.bombardier.unit, hp: 100000, speed: 0 }, 9, 24);
+    for (let i = 0; i < 6; i++) w.spawnUnit('enemy', { ...CARDS.fireants.unit, speed: 0 }, 9 + (i % 3) * 0.5, 21 + Math.floor(i / 3) * 0.5);
+    for (let i = 0; i < 20 * 3; i++) w.step();
+    const hurt = w.units.filter((u) => u.side === 'enemy' && u.hp < u.maxHp).length;
+    const dead = 6 - w.units.filter((u) => u.side === 'enemy').length;
+    expect(hurt + dead).toBeGreaterThanOrEqual(5);
+  });
+
+  it('Dung Beetle walks past bugs to hit a tower', () => {
+    const w = new World(1);
+    const dung = w.spawnUnit('player', { ...CARDS.dung.unit, hp: 100000 }, 3.5, 19);
+    w.spawnUnit('enemy', { ...CARDS.mantis.unit, hp: 100000 }, 3.5, 13);
+    for (let i = 0; i < 20 * 40; i++) w.step();
+    expect(w.byId(dung.targetId)?.kind).toBe('tower');
+    expect(dung.attacking).toBe(true);
+  });
+});

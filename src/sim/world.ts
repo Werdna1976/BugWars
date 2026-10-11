@@ -1,12 +1,14 @@
 import { Arena, Tile } from './arena';
 import { COLS, DT, ROWS, Side, otherSide } from './constants';
 import { NEST, NEST_WAKES_ON_OUTPOST_LOSS, OUTPOST, OUTPOST_ROW, TowerStats } from '../data/towers';
-import { UnitStats } from '../data/units';
+import { TargetRule, UnitStats } from '../data/units';
 import { CARDS } from '../data/cards';
 import { AI_DECK, Deck, PLAYER_DECK } from '../data/decks';
 import { PlayerState, mulberry32 } from './player';
 
 export const DEPLOY_SECONDS = 1;
+// How far a locked target may drift past attack range before the attacker gives up on it.
+const LOCK_SLACK = 0.5;
 
 export const MATCH = {
   regulation: 180, // seconds
@@ -67,13 +69,15 @@ export interface Projectile {
   targetId: number;
   damage: number;
   speed: number;
-  kind: 'seed' | 'spit';
+  kind: 'seed' | 'spit' | 'spray';
+  splash?: { radius: number; rule: TargetRule }; // area damage around the impact
 }
 
 export type WorldEvent =
   | { type: 'hit'; x: number; y: number; targetId: number }
   | { type: 'death'; x: number; y: number; side: Side; isTower: boolean }
-  | { type: 'deploy'; x: number; y: number; side: Side; cardId: string };
+  | { type: 'deploy'; x: number; y: number; side: Side; cardId: string }
+  | { type: 'blast'; x: number; y: number; radius: number };
 
 export class World {
   readonly arena = new Arena();
@@ -288,13 +292,18 @@ export class World {
     const s = u.stats;
     const hittable = (e: Entity) => this.canHit(s.targets, e);
 
-    // Retarget: anything hittable in sight beats marching on a tower.
+    // Target lock: once a bug is hitting something it sticks with it until the
+    // target dies or moves out of reach. While still walking, anything hittable
+    // in sight beats marching on a tower.
     let target = this.byId(u.targetId);
-    const inSight =
-      (s.prefersAir ? this.nearestEnemy(u, s.sight, (e) => e.kind === 'unit' && e.flying) : undefined) ??
-      this.nearestEnemy(u, s.sight, (e) => hittable(e) && (s.targets === 'buildings' || e.kind === 'unit'));
-    if (!target || (target.kind === 'tower' && inSight) || this.gap(u, target) > s.sight + 2) {
-      target = inSight ?? this.nearestEnemyTower(u);
+    const locked = !!target && u.attacking && this.gap(u, target) <= s.range + LOCK_SLACK;
+    if (!locked) {
+      const inSight =
+        (s.prefersAir ? this.nearestEnemy(u, s.sight, (e) => e.kind === 'unit' && e.flying) : undefined) ??
+        this.nearestEnemy(u, s.sight, (e) => hittable(e) && (s.targets === 'buildings' || e.kind === 'unit'));
+      if (!target || (target.kind === 'tower' && inSight) || this.gap(u, target) > s.sight + 2) {
+        target = inSight ?? this.nearestEnemyTower(u);
+      }
     }
     if (target?.id !== u.targetId) {
       u.targetId = target?.id ?? null;
@@ -311,7 +320,9 @@ export class World {
       if (u.cooldown === 0) {
         const dmg = s.damage * (!u.struck && s.firstStrikeMult ? s.firstStrikeMult : 1);
         u.struck = true;
-        if (s.range > 1) this.fire(u.side, u.x, u.y, target.id, dmg, 10, 'spit');
+        const splash = s.splashRadius ? { radius: s.splashRadius, rule: s.targets } : undefined;
+        if (s.range > 1) this.fire(u.side, u.x, u.y, target.id, dmg, 10, splash ? 'spray' : 'spit', splash);
+        else if (splash) this.blast(u.side, target.x, target.y, dmg, splash);
         else this.damage(target, dmg);
         u.cooldown = s.hitSpeed;
       }
@@ -365,7 +376,7 @@ export class World {
     u.facing = Math.atan2(dy, dx);
   }
 
-  // Light push-apart so crowds don't stack on one point. Ground units never get
+  // Light push-apart so friendly crowds don't stack on one point. Ground units never get
   // pushed into puddles or towers.
   private separate() {
     const units = this.units.filter((u) => u.alive);
@@ -373,7 +384,8 @@ export class World {
       for (let j = i + 1; j < units.length; j++) {
         const a = units[i];
         const b = units[j];
-        if (a.flying !== b.flying) continue;
+        // Only friendly bugs jostle; enemies may overlap so nobody gets wedged against a tower.
+        if (a.flying !== b.flying || a.side !== b.side) continue;
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const d = Math.hypot(dx, dy) || 0.01;
@@ -395,8 +407,20 @@ export class World {
     }
   }
 
-  private fire(side: Side, x: number, y: number, targetId: number, damage: number, speed: number, kind: Projectile['kind']) {
-    this.projectiles.push({ id: this.nextId++, side, x, y, prevX: x, prevY: y, targetId, damage, speed, kind });
+  private fire(
+    side: Side, x: number, y: number, targetId: number, damage: number, speed: number,
+    kind: Projectile['kind'], splash?: Projectile['splash'],
+  ) {
+    this.projectiles.push({ id: this.nextId++, side, x, y, prevX: x, prevY: y, targetId, damage, speed, kind, splash });
+  }
+
+  // Area damage: everything the attacker can hit within the radius takes full damage.
+  private blast(side: Side, x: number, y: number, damage: number, splash: NonNullable<Projectile['splash']>) {
+    this.events.push({ type: 'blast', x, y, radius: splash.radius });
+    for (const e of this.entities) {
+      if (!e.alive || e.side === side || !this.canHit(splash.rule, e)) continue;
+      if (Math.hypot(e.x - x, e.y - y) - e.radius <= splash.radius) this.damage(e, damage);
+    }
   }
 
   private stepProjectiles() {
@@ -412,7 +436,8 @@ export class World {
       const d = Math.hypot(dx, dy);
       const stepLen = p.speed * DT;
       if (d <= stepLen + target.radius * 0.5) {
-        this.damage(target, p.damage);
+        if (p.splash) this.blast(p.side, target.x, target.y, p.damage, p.splash);
+        else this.damage(target, p.damage);
         this.projectiles.splice(i, 1);
       } else {
         p.x += (dx / d) * stepLen;

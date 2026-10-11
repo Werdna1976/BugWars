@@ -117,7 +117,7 @@ export class BattleScene extends Phaser.Scene {
       stroke: '#2a1a05', strokeThickness: 6,
     }).setOrigin(0.5).setDepth(450);
     this.input.once('pointerdown', () => music.start());
-    music.setIntense(false);
+    music.reset();
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.updateGhost(p));
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => this.onArenaDown(p));
@@ -470,6 +470,26 @@ export class BattleScene extends Phaser.Scene {
       if (ev.type === 'hit') {
         const flash = this.add.circle(ev.x * TILE, ev.y * TILE, 6, 0xfff2b0, 0.9).setDepth(150);
         this.tweens.add({ targets: flash, scale: 2, alpha: 0, duration: 180, onComplete: () => flash.destroy() });
+      } else if (ev.type === 'blast') {
+        // Area damage: a burst sized to the real blast radius, a shock ring, and flying droplets.
+        const x = ev.x * TILE;
+        const y = ev.y * TILE;
+        const r = ev.radius * TILE;
+        const burst = this.add.image(x, y, 'blast').setDepth(155).setScale(0.3).setAlpha(1);
+        this.tweens.add({ targets: burst, scale: (r * 2) / 64, duration: 220, ease: 'Cubic.Out' });
+        this.tweens.add({ targets: burst, alpha: 0, delay: 220, duration: 380, onComplete: () => burst.destroy() });
+        const ring = this.add.circle(x, y, r).setStrokeStyle(4, 0xffd27a, 1).setDepth(156).setScale(0.4);
+        this.tweens.add({ targets: ring, scale: 1.05, duration: 260, ease: 'Cubic.Out' });
+        this.tweens.add({ targets: ring, alpha: 0, delay: 260, duration: 300, onComplete: () => ring.destroy() });
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2 + Math.random() * 0.4;
+          const drop = this.add.circle(x, y, 3, 0xff9a2a).setDepth(157);
+          this.tweens.add({
+            targets: drop, x: x + Math.cos(a) * r * 1.1, y: y + Math.sin(a) * r * 1.1, alpha: 0, duration: 450,
+            onComplete: () => drop.destroy(),
+          });
+        }
+        this.cameras.main.shake(90, 0.002);
       } else if (ev.type === 'deploy') {
         const ring = this.add.circle(ev.x * TILE, ev.y * TILE, TILE * 0.9).setStrokeStyle(3, SIDE_COLOR[ev.side], 0.9).setDepth(150);
         this.tweens.add({ targets: ring, scale: 0.3, alpha: 0, duration: 900, onComplete: () => ring.destroy() });

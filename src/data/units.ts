@@ -17,6 +17,7 @@ export interface UnitStats {
   targets: TargetRule;
   prefersAir?: boolean; // picks flyers over closer ground targets
   firstStrikeMult?: number; // multiplier on the first attack
+  splashRadius?: number; // area damage around the target, in tiles
 }
 
 export const SPEED = { slow: 0.75, medium: 1.0, fast: 1.33, veryFast: 1.67 } as const;
