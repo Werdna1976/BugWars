@@ -49,9 +49,13 @@ interface TowerView {
   recoil: number;
   flash: number;
   zzz: number;
+  dying: number; // seconds left in the collapse sequence before the rubble shows
+  fallen: boolean;
 }
 
-const STRIKE_SECONDS = 0.28;
+const COLLAPSE_SECONDS = 0.55;
+
+const STRIKE_SECONDS = 0.3;
 const LANES = [3.5, COLS - 3.5];
 
 interface CardView {
@@ -124,6 +128,7 @@ export class BattleScene extends Phaser.Scene {
     this.add.image(0, 0, 'ground').setOrigin(0, 0).setDepth(-10);
     this.add.image(0, 0, 'water').setOrigin(0, 0).setDepth(-5);
     this.animateWater();
+    this.animateGarden();
     this.lastTick = -1;
     if (!this.anims.exists('flag-wave')) {
       this.anims.create({ key: 'flag-wave', frames: this.anims.generateFrameNames('flag', { start: 0, end: 5 }), frameRate: 9, repeat: -1 });
@@ -133,6 +138,7 @@ export class BattleScene extends Phaser.Scene {
 
     this.zoneShade = this.add.graphics().setDepth(90).setVisible(false);
     this.zoneKey = '';
+    this.tweens.add({ targets: this.zoneShade, alpha: 0.65, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
     this.ghost = this.add.image(0, 0, 'pillbug').setAlpha(0.6).setVisible(false).setDepth(200);
 
     this.drawSidePanels();
@@ -188,6 +194,52 @@ export class BattleScene extends Phaser.Scene {
     });
   }
 
+  // Ambient life over the field: drifting canopy shade, sun flecks, pollen
+  // motes and the occasional butterfly passing through.
+  private animateGarden() {
+    for (let i = 0; i < 4; i++) {
+      const x = Math.random() * ARENA_W;
+      const y = (i + 0.5) * (ARENA_H / 4);
+      const shade = this.add.image(x, y, 'shadow').setDepth(-1).setScale(5 + Math.random() * 3, 3 + Math.random() * 2).setAlpha(0.13);
+      this.tweens.add({ targets: shade, x: x + 60 + Math.random() * 40, y: y + 20, duration: 14000 + Math.random() * 6000, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    }
+    for (let i = 0; i < 6; i++) {
+      const x = Math.random() * ARENA_W;
+      const y = Math.random() * ARENA_H;
+      const fleck = this.add.image(x, y, 'glow').setDepth(-1).setScale(1.6 + Math.random()).setAlpha(0.07).setBlendMode(Phaser.BlendModes.ADD);
+      this.tweens.add({ targets: fleck, x: x + 30, alpha: 0.12, duration: 6000 + Math.random() * 4000, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    }
+    for (let i = 0; i < 14; i++) {
+      const mote = this.add.image(Math.random() * ARENA_W, Math.random() * ARENA_H, 'glow').setDepth(200).setScale(0.06).setAlpha(0.5).setTint(0xfff0b0);
+      const drift = () => this.tweens.add({
+        targets: mote, x: mote.x + (Math.random() - 0.3) * 80, y: mote.y + (Math.random() - 0.5) * 60, alpha: 0.2 + Math.random() * 0.5,
+        duration: 4000 + Math.random() * 4000, ease: 'Sine.InOut', onComplete: () => {
+          if (mote.x < -10 || mote.x > ARENA_W + 10) mote.setPosition(Math.random() * ARENA_W, Math.random() * ARENA_H);
+          drift();
+        },
+      });
+      drift();
+    }
+    if (!this.anims.exists('butterfly-flap')) {
+      this.anims.create({ key: 'butterfly-flap', frames: this.anims.generateFrameNames('butterfly', { start: 0, end: 3 }), frameRate: 14, repeat: -1 });
+      this.anims.create({ key: 'butterfly2-flap', frames: this.anims.generateFrameNames('butterfly2', { start: 0, end: 3 }), frameRate: 14, repeat: -1 });
+    }
+    this.time.addEvent({
+      delay: 16000, loop: true, startAt: 9000, callback: () => {
+        const left = Math.random() < 0.5;
+        const y0 = 100 + Math.random() * (ARENA_H - 200);
+        const y1 = y0 + (Math.random() - 0.5) * 300;
+        const key = Math.random() < 0.5 ? 'butterfly' : 'butterfly2';
+        const b = this.add.sprite(left ? -20 : ARENA_W + 20, y0, key).setScale(0.42).setDepth(210).setAlpha(0.95);
+        b.play(`${key}-flap`);
+        b.setRotation(left ? 0 : Math.PI);
+        this.tweens.add({ targets: b, x: left ? ARENA_W + 20 : -20, duration: 9000, ease: 'Linear', onComplete: () => b.destroy() });
+        this.tweens.add({ targets: b, y: y1, duration: 9000, ease: 'Sine.InOut' });
+        this.tweens.add({ targets: b, rotation: b.rotation + 0.35, duration: 500, yoyo: true, repeat: 17, ease: 'Sine.InOut' });
+      },
+    });
+  }
+
   private makeTowerView(t: Tower) {
     const x = t.x * TILE;
     const y = t.y * TILE;
@@ -208,7 +260,7 @@ export class BattleScene extends Phaser.Scene {
         bees.push(bee);
       }
     }
-    this.towerViews.set(t.id, { sprite, turret, flag, bees, bar: this.add.graphics().setDepth(100), aim, recoil: 0, flash: 0, zzz: 1 });
+    this.towerViews.set(t.id, { sprite, turret, flag, bees, bar: this.add.graphics().setDepth(100), aim, recoil: 0, flash: 0, zzz: 1, dying: 0, fallen: false });
   }
 
   // ---------- Card panel ----------
@@ -414,11 +466,21 @@ export class BattleScene extends Phaser.Scene {
     const key = this.world.towers.map((t) => (t.alive ? 1 : 0)).join('');
     if (key === this.zoneKey) return;
     this.zoneKey = key;
-    const g = this.zoneShade.clear().fillStyle(0xe5484d, 0.2);
+    const g = this.zoneShade.clear().fillStyle(0x7a1010, 0.22);
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) if (!this.world.inDeployZone('player', c, r)) g.fillRect(c * TILE, r * TILE, TILE, TILE);
     }
-    g.lineStyle(2, 0xffffff, 0.35);
+    // Diagonal hatching over the no-deploy area.
+    g.lineStyle(2, 0xe5484d, 0.32);
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (this.world.inDeployZone('player', c, r)) continue;
+        g.lineBetween(c * TILE, (r + 0.5) * TILE, (c + 0.5) * TILE, r * TILE);
+        g.lineBetween(c * TILE, (r + 1) * TILE, (c + 1) * TILE, r * TILE);
+        g.lineBetween((c + 0.5) * TILE, (r + 1) * TILE, (c + 1) * TILE, (r + 0.5) * TILE);
+      }
+    }
+    g.lineStyle(3, 0x8ac4ff, 0.85);
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
         const inside = this.world.inDeployZone('player', c, r);
@@ -565,9 +627,7 @@ export class BattleScene extends Phaser.Scene {
       switch (ev.type) {
         case 'hit': {
           const target = w.entities.find((e) => e.id === ev.targetId);
-          const spark = this.add.image(ev.x * TILE + (Math.random() - 0.5) * 8, ev.y * TILE + (Math.random() - 0.5) * 8, 'spark')
-            .setDepth(150).setScale(0.25).setRotation(Math.random() * 3);
-          this.tweens.add({ targets: spark, scale: 0.5, alpha: 0, duration: 200, onComplete: () => spark.destroy() });
+          this.impact(ev.x * TILE + (Math.random() - 0.5) * 8, ev.y * TILE + (Math.random() - 0.5) * 8, ev.by);
           if (target?.kind === 'tower') {
             const tv = this.towerViews.get(target.id);
             if (tv) tv.flash = 0.08;
@@ -613,9 +673,25 @@ export class BattleScene extends Phaser.Scene {
         }
         case 'wake': {
           const t = w.entities.find((e) => e.id === ev.towerId);
-          if (t) {
-            const ring = this.add.image(t.x * TILE, t.y * TILE, 'ring').setTint(0xffd060).setDepth(140).setScale(0.6);
+          if (t?.kind === 'tower') {
+            const x = t.x * TILE;
+            const y = t.y * TILE;
+            const ring = this.add.image(x, y, 'ring').setTint(0xffd060).setDepth(140).setScale(0.6);
             this.tweens.add({ targets: ring, scale: 3, alpha: 0, duration: 700, onComplete: () => ring.destroy() });
+            const tv = this.towerViews.get(t.id);
+            if (tv) this.tweens.add({ targets: tv.sprite, scale: 1.1 / HI, duration: 140, yoyo: true, repeat: 1, ease: 'Sine.Out' });
+            // A swarm pours out of the entrance, which faces the middle of the field.
+            const ey = y + (t.side === 'enemy' ? 1 : -1) * t.radius * TILE * 0.9;
+            for (let i = 0; i < 9; i++) {
+              const a = (t.side === 'enemy' ? Math.PI / 2 : -Math.PI / 2) + (Math.random() - 0.5) * 2.2;
+              const bee = this.add.sprite(x, ey, 'bee').setScale(0.6).setDepth(170).setRotation(a + Math.PI / 2);
+              bee.play('bee-buzz');
+              const d = 50 + Math.random() * 60;
+              this.tweens.add({
+                targets: bee, x: x + Math.cos(a) * d, y: ey + Math.sin(a) * d, duration: 500 + Math.random() * 300, ease: 'Cubic.Out',
+                onComplete: () => this.tweens.add({ targets: bee, x, y, alpha: 0, scale: 0.3, duration: 700, ease: 'Sine.In', onComplete: () => bee.destroy() }),
+              });
+            }
           }
           sfx.play('nestWake');
           break;
@@ -627,6 +703,30 @@ export class BattleScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  // Hit effects that say what landed: a white snap for bites, husk bits for
+  // seeds, sticky amber for honey, green splatter for spit.
+  private impact(x: number, y: number, by: string) {
+    const splat = (key: string, tint: number | null, n: number, dist: number, size: number) => {
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const d = dist * (0.4 + Math.random() * 0.8);
+        const bit = this.add.image(x, y, key).setDepth(151).setScale(size * (0.6 + Math.random() * 0.6)).setRotation(Math.random() * 6);
+        if (tint !== null) bit.setTint(tint);
+        this.tweens.add({ targets: bit, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d, alpha: 0, scale: bit.scale * 0.5, duration: 260 + Math.random() * 160, ease: 'Quad.Out', onComplete: () => bit.destroy() });
+      }
+    };
+    if (by === 'blast') return; // the blast effect covers it
+    const flash = this.add.image(x, y, 'spark').setDepth(150).setScale(0.22).setRotation(Math.random() * 3);
+    if (by === 'honey') flash.setTint(0xffc040);
+    if (by === 'spit') flash.setTint(0xc8ff90);
+    this.tweens.add({ targets: flash, scale: by === 'melee' ? 0.5 : 0.42, alpha: 0, duration: 200, onComplete: () => flash.destroy() });
+    if (by === 'seed') splat('shard', 0x2a2420, 3, 12, 0.3);
+    else if (by === 'honey') splat('honey', null, 4, 14, 0.28);
+    else if (by === 'spit') splat('spit', null, 5, 13, 0.3);
+    else if (by === 'spray') splat('spray', null, 3, 10, 0.3);
+    else splat('shard', 0x3a2a1a, 2, 9, 0.22);
   }
 
   private chips(x: number, y: number, key: string, n: number, spread: number) {
@@ -694,24 +794,55 @@ export class BattleScene extends Phaser.Scene {
     sfx.play('squish', { pan: this.pan(tx) });
   }
 
-  private towerFall(tx: number, ty: number, side: Side) {
-    const x = tx * TILE;
-    const y = ty * TILE;
+  // A tower collapse plays in two beats: it shudders and cracks (see render),
+  // then bursts into dust, shards or straw and settles into rubble.
+  private towerFall(tx: number, ty: number, _side: Side) {
     const t = this.world.towers.find((o) => !o.alive && o.x === tx && o.y === ty);
-    const nest = t?.role === 'nest';
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * Math.PI * 2;
+    const view = t && this.towerViews.get(t.id);
+    if (view) view.dying = COLLAPSE_SECONDS;
+    sfx.play('crack', { pan: this.pan(tx) });
+  }
+
+  private towerBurst(t: Tower) {
+    const x = t.x * TILE;
+    const y = t.y * TILE;
+    const nest = t.role === 'nest';
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2 + Math.random() * 0.3;
       const puff = this.add.image(x, y, 'puff').setDepth(160).setAlpha(0.95).setScale(0.6).setTint(nest ? 0xe8d098 : 0xd8b8a0);
       this.tweens.add({
-        targets: puff, x: x + Math.cos(a) * 70, y: y + Math.sin(a) * 50, alpha: 0, scale: 1.6, duration: 900, ease: 'Cubic.Out',
-        onComplete: () => puff.destroy(),
+        targets: puff, x: x + Math.cos(a) * (60 + Math.random() * 30), y: y + Math.sin(a) * (40 + Math.random() * 25),
+        alpha: 0, scale: 1.7, duration: 900 + Math.random() * 300, ease: 'Cubic.Out', onComplete: () => puff.destroy(),
       });
     }
-    this.chips(x, y, nest ? 'straw' : 'shard', 18, 70);
-    const ring = this.add.image(x, y, 'ring').setTint(SIDE_COLOR[side]).setDepth(158).setScale(0.8);
-    this.tweens.add({ targets: ring, scale: 4, alpha: 0, duration: 800, ease: 'Cubic.Out', onComplete: () => ring.destroy() });
-    this.cameras.main.shake(320, 0.007);
-    sfx.play('towerFall', { pan: this.pan(tx) });
+    // Debris thrown up and falling back: an arc made of two tweens.
+    for (let i = 0; i < 22; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 30 + Math.random() * 60;
+      const bit = this.add.image(x, y, nest ? 'straw' : 'shard').setDepth(161).setScale(0.45 + Math.random() * 0.4).setRotation(Math.random() * 6);
+      const tx = x + Math.cos(a) * d;
+      const ty = y + Math.sin(a) * d * 0.7;
+      this.tweens.add({ targets: bit, x: tx, duration: 650, ease: 'Linear' });
+      this.tweens.add({ targets: bit, y: ty - 26, duration: 300, ease: 'Quad.Out', yoyo: false, onComplete: () => {
+        this.tweens.add({ targets: bit, y: ty, duration: 350, ease: 'Quad.In' });
+      } });
+      this.tweens.add({ targets: bit, rotation: bit.rotation + 6, alpha: 0, delay: 900, duration: 700, onComplete: () => bit.destroy() });
+    }
+    if (nest) {
+      // The colony scatters.
+      for (let i = 0; i < 10; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const bee = this.add.sprite(x, y, 'bee').setScale(0.6).setDepth(170).setRotation(a + Math.PI / 2);
+        bee.play('bee-buzz');
+        this.tweens.add({ targets: bee, x: x + Math.cos(a) * 260, y: y + Math.sin(a) * 260, alpha: 0, duration: 1400 + Math.random() * 600, ease: 'Sine.In', onComplete: () => bee.destroy() });
+      }
+    }
+    const ring = this.add.image(x, y, 'ring').setTint(0xfff0c0).setDepth(158).setScale(0.8);
+    this.tweens.add({ targets: ring, scale: 4.5, alpha: 0, duration: 800, ease: 'Cubic.Out', onComplete: () => ring.destroy() });
+    const flash = this.add.image(x, y, 'glow').setDepth(159).setScale(3).setAlpha(0.8).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({ targets: flash, alpha: 0, duration: 300, onComplete: () => flash.destroy() });
+    this.cameras.main.shake(340, 0.008);
+    sfx.play('towerFall', { pan: this.pan(t.x) });
   }
 
   private render(alpha: number) {
@@ -723,10 +854,25 @@ export class BattleScene extends Phaser.Scene {
     for (const t of this.world.towers) {
       const view = this.towerViews.get(t.id)!;
       view.bar.clear();
+      if (!t.alive && view.dying > 0) {
+        // Shudder and crack before the collapse.
+        view.dying -= dt;
+        const k = 1 - view.dying / COLLAPSE_SECONDS;
+        const j = 2 + k * 4;
+        view.sprite.setPosition(t.x * TILE + (Math.random() - 0.5) * j, t.y * TILE + (Math.random() - 0.5) * j).setScale((1 - k * 0.08) / HI);
+        if (Math.floor(k * 6) % 2) view.sprite.setTintFill(0xffffff);
+        else view.sprite.setTint(0xb07050);
+        view.turret?.setScale(0.62 * (1 - k * 0.5)).setRotation(view.aim + k * 1.5);
+        if (Math.random() < 0.35) this.chips(t.x * TILE, t.y * TILE, t.role === 'nest' ? 'straw' : 'shard', 1, 30);
+        continue;
+      }
       if (!t.alive) {
         const key = `rubble_${t.role}`;
-        if (view.sprite.texture.key !== key) {
-          view.sprite.setTexture(key).setDepth(-2);
+        if (!view.fallen) {
+          view.fallen = true;
+          this.towerBurst(t);
+          view.sprite.setTexture(key).setDepth(-2).clearTint().setPosition(t.x * TILE, t.y * TILE).setScale(1.2 / HI);
+          this.tweens.add({ targets: view.sprite, scale: 1 / HI, duration: 400, ease: 'Bounce.Out' });
           view.turret?.destroy();
           view.turret = undefined;
           view.flag.setVisible(false);
@@ -794,9 +940,18 @@ export class BattleScene extends Phaser.Scene {
       view.lastCooldown = u.cooldown;
       view.strikeT += dt;
       let frame = Math.floor(view.walk * WALK_FRAMES) % WALK_FRAMES;
-      if (!u.flying && moved < 0.001) frame = 0;
-      if (view.strikeT < STRIKE_SECONDS) frame = WALK_FRAMES + Math.min(BUG_FRAMES - WALK_FRAMES - 1, Math.floor((view.strikeT / STRIKE_SECONDS) * (BUG_FRAMES - WALK_FRAMES)));
-      const lunge = view.strikeT < STRIKE_SECONDS ? Math.sin((view.strikeT / STRIKE_SECONDS) * Math.PI) * 3 : 0;
+      const still = !u.flying && moved < 0.001;
+      if (still) frame = 0;
+      // Anticipation: the wind-up frame shows just before the next blow lands,
+      // then the strike frames play out after it.
+      const strikes = BUG_FRAMES - WALK_FRAMES - 1;
+      const winding = u.attacking && u.cooldown > 0 && u.cooldown < 0.14;
+      if (view.strikeT < STRIKE_SECONDS) frame = WALK_FRAMES + 1 + Math.min(strikes - 1, Math.floor((view.strikeT / STRIKE_SECONDS) * strikes));
+      else if (winding) frame = WALK_FRAMES;
+      const swing = view.strikeT < STRIKE_SECONDS ? Math.sin((view.strikeT / STRIKE_SECONDS) * Math.PI) * 3.5 : 0;
+      const lunge = winding ? -1.8 : swing;
+      // Idle breathing so a bug standing still doesn't look frozen.
+      const breathe = still && view.strikeT >= STRIKE_SECONDS ? 1 + Math.sin(now * 3.2 + u.id) * 0.025 : 1;
       const scale = bugScale(u.stats.id, u.radius);
       // Freshly deployed bugs drop in from above.
       const drop = u.deploying > 0 ? u.deploying : 0;
@@ -810,7 +965,7 @@ export class BattleScene extends Phaser.Scene {
         .setFrame(String(frame))
         .setPosition(x + Math.cos(u.facing) * lunge, y - lift - drop * 26 + Math.sin(u.facing) * lunge)
         .setRotation(u.facing)
-        .setScale(scale * (1 + drop * 0.35))
+        .setScale(scale * (1 + drop * 0.35) * breathe)
         .setAlpha(u.deploying > 0 ? 1 - drop * 0.6 : 1)
         .setDepth(depth);
       if (view.flash > 0) view.sprite.setTintFill(0xffffff);
@@ -880,25 +1035,72 @@ export class BattleScene extends Phaser.Scene {
     this.ghost.setVisible(false);
     this.zoneShade.setVisible(false);
     this.selected = null;
+    // Let a falling tower finish its collapse before the banner drops in.
+    this.time.delayedCall(1300, () => this.showResultBanner(result));
+  }
+
+  private showResultBanner(result: Result) {
     music.setIntense(false);
     const won = result === 'player';
-    sfx.play(won ? 'victory' : 'defeat');
+    sfx.play(won ? 'victory' : result === 'draw' ? 'go' : 'defeat');
     const w = this.world;
-    this.add.rectangle(ARENA_W / 2, ARENA_H / 2, ARENA_W, 180, 0x000000, 0.65).setDepth(400);
-    this.add.text(ARENA_W / 2, ARENA_H / 2 - 44, result === 'draw' ? 'Draw' : won ? 'Victory!' : 'Defeat', {
-      fontFamily: FONT, fontSize: '48px', color: result === 'draw' ? '#ffffff' : won ? '#f2c12e' : '#e5484d', fontStyle: 'bold',
-    }).setOrigin(0.5).setDepth(401);
+    const cx = ARENA_W / 2;
+    const cy = ARENA_H / 2;
+    const dim = this.add.rectangle(cx, cy, ARENA_W, ARENA_H, 0x000000, 0).setDepth(399);
+    this.tweens.add({ targets: dim, fillAlpha: 0.5, duration: 500 });
+    const board = this.add.container(cx, cy - 400).setDepth(401);
+    board.add(this.add.image(0, 0, 'banner').setScale(1 / HI));
+    board.add(this.add.text(0, -92, result === 'draw' ? 'Draw' : won ? 'Victory!' : 'Defeat', {
+      fontFamily: FONT, fontSize: '52px', fontStyle: 'bold', color: result === 'draw' ? '#ffffff' : won ? '#ffd84a' : '#ff8a8a',
+      stroke: '#2a1405', strokeThickness: 8,
+    }).setOrigin(0.5));
+    // Crowns: one per enemy tower each side knocked down.
+    const row = (label: string, side: Side, y: number, color: string) => {
+      board.add(this.add.text(-150, y, label, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color }).setOrigin(0, 0.5));
+      for (let i = 0; i < 3; i++) {
+        const earned = i < w.crowns(side);
+        const crown = this.add.image(10 + i * 50, y, earned ? 'crown' : 'crown_empty').setScale(0.55);
+        board.add(crown);
+        if (earned) {
+          crown.setScale(0);
+          this.tweens.add({ targets: crown, scale: 0.55, delay: 650 + i * 180 + (side === 'enemy' ? 500 : 0), duration: 350, ease: 'Back.Out' });
+        }
+      }
+    };
+    row('You', 'player', -24, '#b3d1ff');
+    row('AI', 'enemy', 26, '#ffb3b5');
     const tied = w.crowns('player') === w.crowns('enemy');
-    const detail = `Towers ${w.crowns('player')} : ${w.crowns('enemy')}` + (tied && result !== 'draw' ? '  (decided by tower health)' : '');
-    this.add.text(ARENA_W / 2, ARENA_H / 2 + 2, detail, { fontFamily: FONT, fontSize: '16px', color: '#e8e0cc' })
-      .setOrigin(0.5).setDepth(401);
-    const again = this.add.text(ARENA_W / 2, ARENA_H / 2 + 50, 'Play again', {
-      fontFamily: FONT, fontSize: '24px', color: '#ffffff', backgroundColor: '#3f5632', padding: { x: 16, y: 8 },
-    }).setOrigin(0.5).setDepth(401).setInteractive({ useHandCursor: true });
-    again.on('pointerdown', (_p: unknown, _x: unknown, _y: unknown, ev: Phaser.Types.Input.EventData) => {
+    if (tied && result !== 'draw') {
+      board.add(this.add.text(0, 62, 'Decided by tower health', { fontFamily: FONT, fontSize: '14px', color: '#e8dcc0' }).setOrigin(0.5));
+    }
+    const btn = this.add.container(0, 100);
+    const bg = this.add.graphics();
+    bg.fillStyle(0x1a1008, 1).fillRoundedRect(-97, -28, 194, 56, 16);
+    bg.fillStyle(0x4f8a2a, 1).fillRoundedRect(-94, -25, 188, 50, 14);
+    bg.fillStyle(0x7ab84a, 1).fillRoundedRect(-90, -22, 180, 20, 10);
+    bg.lineStyle(2, 0xf6d23a, 0.9).strokeRoundedRect(-94, -25, 188, 50, 14);
+    const label = this.add.text(0, 0, 'Play again', { fontFamily: FONT, fontSize: '22px', fontStyle: 'bold', color: '#ffffff', stroke: '#1a2a0a', strokeThickness: 4 }).setOrigin(0.5);
+    btn.add([bg, label]);
+    btn.setSize(190, 52).setInteractive({ useHandCursor: true });
+    btn.on('pointerover', () => btn.setScale(1.06));
+    btn.on('pointerout', () => btn.setScale(1));
+    btn.on('pointerdown', (_p: unknown, _x: unknown, _y: unknown, ev: Phaser.Types.Input.EventData) => {
       ev.stopPropagation();
+      sfx.play('click');
       this.scene.restart();
     });
+    board.add(btn);
+    this.tweens.add({ targets: board, y: cy, duration: 700, ease: 'Back.Out' });
+    // Falling petals: bright confetti for a win, grey wilted leaves for a loss.
+    const tints = won ? [0xffd84a, 0xff8ab0, 0x8ad0ff, 0xffffff, 0x9ae070] : [0x8a8070, 0x6a6258, 0x9a8a6a];
+    for (let i = 0; i < (won ? 70 : 30); i++) {
+      const p = this.add.image(Math.random() * ARENA_W, -20 - Math.random() * 300, won ? 'floatleaf2' : 'floatleaf')
+        .setScale(0.25 + Math.random() * 0.2).setTint(tints[i % tints.length]).setDepth(400).setRotation(Math.random() * 6);
+      this.tweens.add({
+        targets: p, y: ARENA_H + 30, x: p.x + (Math.random() - 0.5) * 120, rotation: p.rotation + (Math.random() - 0.5) * 10,
+        duration: 3000 + Math.random() * 2500, delay: Math.random() * 800, ease: 'Sine.In', onComplete: () => p.destroy(),
+      });
+    }
   }
 }
 

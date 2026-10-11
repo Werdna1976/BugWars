@@ -157,3 +157,86 @@ export function drawPlanks(ctx: Ctx, w: number, h: number) {
 }
 
 export { blob };
+
+// A crown for the result screen: gold when earned, a dull outline when not.
+export function drawCrown(ctx: Ctx, s: number, earned: boolean) {
+  const k = s / 40;
+  ctx.save();
+  ctx.scale(k, k);
+  ctx.beginPath();
+  ctx.moveTo(6, 30);
+  ctx.lineTo(4, 12);
+  ctx.lineTo(13, 20);
+  ctx.lineTo(20, 7);
+  ctx.lineTo(27, 20);
+  ctx.lineTo(36, 12);
+  ctx.lineTo(34, 30);
+  ctx.closePath();
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = INK;
+  ctx.stroke();
+  if (earned) {
+    const g = ctx.createLinearGradient(0, 8, 0, 30);
+    g.addColorStop(0, '#fff2a0');
+    g.addColorStop(0.5, '#f2c12e');
+    g.addColorStop(1, '#b07a10');
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = 'rgba(80,70,60,0.6)';
+  }
+  ctx.fill();
+  ctx.fillStyle = earned ? '#b07a10' : 'rgba(40,30,20,0.6)';
+  ctx.fillRect(6, 30, 28, 5);
+  if (earned) for (const [x, y] of [[4, 12], [20, 7], [36, 12]]) blob(ctx, x, y, 2.6, 2.6, '#e5484d', { outline: 1, gloss: 0.6 });
+  ctx.restore();
+}
+
+// Result banner: a plank board with a leafy edge.
+export function drawBanner(ctx: Ctx, w: number, h: number) {
+  roundRect(ctx, 3, 3, w - 6, h - 6, 18);
+  ctx.fillStyle = INK;
+  ctx.fill();
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, '#7a5434');
+  g.addColorStop(1, '#4a3020');
+  roundRect(ctx, 7, 7, w - 14, h - 14, 15);
+  ctx.fillStyle = g;
+  ctx.fill();
+  const n = valueNoise(8);
+  ctx.save();
+  roundRect(ctx, 7, 7, w - 14, h - 14, 15);
+  ctx.clip();
+  for (let y = 7; y < h; y += 3) {
+    ctx.strokeStyle = rgba('#2a1808', 0.12 + n(0, y / 20) * 0.15);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, y + Math.sin(y) * 0.5);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.strokeStyle = rgba('#ffd890', 0.35);
+  ctx.lineWidth = 2;
+  roundRect(ctx, 12, 12, w - 24, h - 24, 11);
+  ctx.stroke();
+  const r = rng(3);
+  for (let i = 0; i < 18; i++) {
+    const top = i < 9;
+    const x = 20 + ((i % 9) / 8) * (w - 40) + (r() - 0.5) * 10;
+    const y = top ? 6 : h - 6;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate((r() - 0.5) * 1.2 + (top ? 0 : Math.PI));
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(7, -6, 0, -16);
+    ctx.quadraticCurveTo(-7, -6, 0, 0);
+    ctx.fillStyle = r() < 0.5 ? '#5a9a34' : '#7ab84a';
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.restore();
+  }
+}

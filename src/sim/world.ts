@@ -80,7 +80,7 @@ export interface Projectile {
 }
 
 export type WorldEvent =
-  | { type: 'hit'; x: number; y: number; targetId: number }
+  | { type: 'hit'; x: number; y: number; targetId: number; by: Projectile['kind'] | 'melee' | 'blast' }
   | { type: 'death'; id: number; x: number; y: number; side: Side; isTower: boolean }
   | { type: 'deploy'; x: number; y: number; side: Side; cardId: string }
   | { type: 'blast'; x: number; y: number; radius: number }
@@ -511,7 +511,7 @@ export class World {
     this.events.push({ type: 'blast', x, y, radius: splash.radius });
     for (const e of this.entities) {
       if (!e.alive || e.side === side || !this.canHit(splash.rule, e)) continue;
-      if (Math.hypot(e.x - x, e.y - y) - e.radius <= splash.radius) this.damage(e, damage);
+      if (Math.hypot(e.x - x, e.y - y) - e.radius <= splash.radius) this.damage(e, damage, 'blast');
     }
   }
 
@@ -529,7 +529,7 @@ export class World {
       const stepLen = p.speed * DT;
       if (d <= stepLen + target.radius * 0.5) {
         if (p.splash) this.blast(p.side, target.x, target.y, p.damage, p.splash);
-        else this.damage(target, p.damage);
+        else this.damage(target, p.damage, p.kind);
         this.projectiles.splice(i, 1);
       } else {
         p.x += (dx / d) * stepLen;
@@ -538,9 +538,9 @@ export class World {
     }
   }
 
-  private damage(target: Entity, amount: number) {
+  private damage(target: Entity, amount: number, by: Extract<WorldEvent, { type: 'hit' }>['by'] = 'melee') {
     target.hp -= amount;
-    this.events.push({ type: 'hit', x: target.x, y: target.y, targetId: target.id });
+    this.events.push({ type: 'hit', x: target.x, y: target.y, targetId: target.id, by });
     if (target.kind === 'tower' && target.role === 'nest') this.wake(target);
   }
 

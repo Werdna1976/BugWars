@@ -16,9 +16,10 @@ export interface BugArt {
 }
 
 export const WALK_FRAMES = 8;
-export const STRIKE_FRAMES = 4;
-// Attack extension for each strike frame: snap out, hold, pull back.
-export const STRIKE_CURVE = [0.45, 1, 0.75, 0.3];
+export const STRIKE_FRAMES = 5;
+// Attack extension for each strike frame: a wind-up (pulling back), then snap
+// out, hold and recover. Frame 0 plays just before the blow lands.
+export const STRIKE_CURVE = [-0.35, 0.55, 1, 0.7, 0.25];
 
 const TAU = Math.PI * 2;
 

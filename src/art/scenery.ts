@@ -787,3 +787,29 @@ export function drawBee(ctx: Ctx, s: number, wing: number) {
 }
 
 export { ellipsePath };
+
+// Butterfly seen from above; `flap` 0..1 closes the wings toward the body.
+export function drawButterfly(ctx: Ctx, s: number, flap: number, color: string) {
+  const c = s / 2;
+  const open = 1 - flap * 0.75;
+  for (const side of [-1, 1]) {
+    at(ctx, c, c, 0, () => {
+      ctx.scale(1, side * open);
+      for (const [x, y, rx, ry, col] of [[-4, 10, 8, 10, color], [5, 8, 6, 8, tone(color, -0.1)]] as const) {
+        ellipsePath(ctx, x, y, rx, ry, x < 0 ? -0.4 : 0.4);
+        ctx.fillStyle = INK;
+        ctx.fill();
+        ellipsePath(ctx, x, y, rx - 1.2, ry - 1.2, x < 0 ? -0.4 : 0.4);
+        ctx.fillStyle = col;
+        ctx.fill();
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(-6, 14, 2, 0, TAU);
+      ctx.fill();
+    });
+  }
+  blob(ctx, c, c, 6, 1.8, '#2a1a10', { outline: 0.8 });
+  limb(ctx, [[c + 5, c], [c + 10, c - 4]], 0.8, '#2a1a10', 0);
+  limb(ctx, [[c + 5, c], [c + 10, c + 4]], 0.8, '#2a1a10', 0);
+}

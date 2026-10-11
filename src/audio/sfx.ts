@@ -5,7 +5,7 @@
 
 export type SfxName =
   | 'deploy' | 'bite' | 'thump' | 'hitNest' | 'seed' | 'honey' | 'spit' | 'spray' | 'blast' | 'hitTower'
-  | 'squish' | 'towerFall' | 'nestWake' | 'click' | 'tick' | 'go' | 'victory' | 'defeat';
+  | 'squish' | 'crack' | 'towerFall' | 'nestWake' | 'click' | 'tick' | 'go' | 'victory' | 'defeat';
 
 interface Spec {
   files: string[]; // variants, one picked at random
@@ -26,6 +26,7 @@ const SPECS: Record<SfxName, Spec> = {
   blast: { files: ['blast'], volume: 0.5, minGap: 0.08, pitch: 0.1 },
   hitTower: { files: ['hitTower1', 'hitTower2'], volume: 0.22, minGap: 0.09, pitch: 0.12 },
   squish: { files: ['squish1', 'squish2'], volume: 0.4, minGap: 0.05, pitch: 0.15 },
+  crack: { files: ['crack'], volume: 0.5, minGap: 0.3, pitch: 0.05 },
   towerFall: { files: ['towerFall'], volume: 0.75, minGap: 0.3, pitch: 0.05 },
   nestWake: { files: ['nestWake'], volume: 0.55, minGap: 0.5, pitch: 0 },
   click: { files: ['click'], volume: 0.4, minGap: 0.03, pitch: 0.05 },
@@ -34,6 +35,8 @@ const SPECS: Record<SfxName, Spec> = {
   victory: { files: ['victory'], volume: 0.7, minGap: 1, pitch: 0 },
   defeat: { files: ['defeat'], volume: 0.7, minGap: 1, pitch: 0 },
 };
+
+const AMBIENCE_VOLUME = 0.22;
 
 class Sfx {
   private ctx: AudioContext | null = null;
@@ -55,6 +58,21 @@ class Sfx {
     this.out.gain.value = this.muted ? 0 : 0.8;
     this.out.connect(this.ctx.destination);
     for (const spec of Object.values(SPECS)) for (const f of spec.files) void this.load(f);
+    void this.startAmbience();
+  }
+
+  // Quiet garden bed loop (crickets, breeze, the odd bird), synthesized for the game.
+  private async startAmbience() {
+    await this.load('ambience');
+    const buf = this.buffers.get('ambience');
+    if (!buf || !this.ctx || !this.out) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const g = this.ctx.createGain();
+    g.gain.value = AMBIENCE_VOLUME;
+    src.connect(g).connect(this.out);
+    src.start();
   }
 
   setMuted(m: boolean) {
@@ -85,7 +103,8 @@ class Sfx {
     const file = spec.files[Math.floor(Math.random() * spec.files.length)];
     const buf = this.buffers.get(file);
     const gain = ctx.createGain();
-    gain.gain.value = spec.volume * (opts.gain ?? 1);
+    // A little level variation so repeated hits don't sound stamped out.
+    gain.gain.value = spec.volume * (opts.gain ?? 1) * (0.88 + Math.random() * 0.24);
     const panner = ctx.createStereoPanner();
     panner.pan.value = Math.max(-1, Math.min(1, opts.pan ?? 0)) * 0.6;
     gain.connect(panner).connect(this.out);
@@ -153,6 +172,7 @@ function synth(ctx: AudioContext, name: SfxName, out: AudioNode, rate: number) {
     case 'blast': noise(0.4, 400, 0.7, 1, 'lowpass'); tone('sine', 120, 40, 0.35, 0.9); break;
     case 'hitTower': tone('triangle', 260, 140, 0.08, 0.6); noise(0.05, 1500, 2, 0.4); break;
     case 'squish': noise(0.12, 700, 2.5, 0.8); tone('sine', 300, 90, 0.1, 0.4); break;
+    case 'crack': noise(0.25, 1800, 2, 0.8); break;
     case 'towerFall': noise(0.9, 250, 0.6, 1, 'lowpass'); tone('sine', 90, 30, 0.8, 1); break;
     case 'nestWake': for (let i = 0; i < 3; i++) tone('sawtooth', 180 + i * 7, 230 + i * 9, 0.7, 0.12, 0.15); break;
     case 'click': tone('square', 1500, 1200, 0.03, 0.25); break;
