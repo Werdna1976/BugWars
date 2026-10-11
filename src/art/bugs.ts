@@ -322,6 +322,20 @@ const mantis: BugArt = {
     ctx.stroke();
     // Long prothorax.
     taper(ctx, [[0, 0], [16, 0], [34, 0]], 8, 5, green, 1.5);
+    // Raptorial forelegs: folded beside the neck at rest, flung forward on a strike.
+    for (const s of [-1, 1]) {
+      const e = strike;
+      const coxa: Pt = [24, s * 3];
+      const knee: Pt = [32 + e * 14, s * (15 - e * 6)];
+      const tip: Pt = [knee[0] - 10 + e * 26, s * (11 - e * 7)];
+      taper(ctx, [coxa, knee], 6, 5, green, 1.5);
+      taper(ctx, [knee, tip], 4.5, 2, '#a6e060', 1.4);
+      for (let k = 0.25; k < 1; k += 0.25) {
+        const px = coxa[0] + (knee[0] - coxa[0]) * k;
+        const py = coxa[1] + (knee[1] - coxa[1]) * k;
+        limb(ctx, [[px, py], [px + 1, py - s * 3.2]], 1.1, '#2e5a12', 0);
+      }
+    }
     // Triangle head with big bulging eyes at the corners.
     const hx = 40 + strike * 4;
     poly(ctx, [[hx - 5, -10], [hx - 5, 10], [hx + 9, 0]], '#8fd24e', 1.5);
@@ -332,20 +346,6 @@ const mantis: BugArt = {
       ctx.fill();
     }
     antennae(ctx, hx + 4, 0, 16, '#4e8a26', walk, { width: 1.2 });
-    // Raptorial forelegs: folded beside the neck at rest, flung forward on a strike.
-    for (const s of [-1, 1]) {
-      const e = strike;
-      const coxa: Pt = [24, s * 3];
-      const knee: Pt = [34 + e * 12, s * (12 - e * 4)];
-      const tip: Pt = [knee[0] - 14 + e * 28, s * (8 - e * 5)];
-      taper(ctx, [coxa, knee], 6, 5, green, 1.5);
-      taper(ctx, [knee, tip], 4.5, 2, '#a6e060', 1.4);
-      for (let k = 0.25; k < 1; k += 0.25) {
-        const px = coxa[0] + (knee[0] - coxa[0]) * k;
-        const py = coxa[1] + (knee[1] - coxa[1]) * k;
-        limb(ctx, [[px, py], [px + 1, py - s * 3.2]], 1.1, '#2e5a12', 0);
-      }
-    }
   },
 };
 
