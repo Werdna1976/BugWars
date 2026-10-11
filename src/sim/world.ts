@@ -75,15 +75,18 @@ export interface Projectile {
   targetId: number;
   damage: number;
   speed: number;
-  kind: 'seed' | 'spit' | 'spray';
+  kind: 'seed' | 'honey' | 'spit' | 'spray';
   splash?: { radius: number; rule: TargetRule }; // area damage around the impact
 }
 
 export type WorldEvent =
   | { type: 'hit'; x: number; y: number; targetId: number }
-  | { type: 'death'; x: number; y: number; side: Side; isTower: boolean }
+  | { type: 'death'; id: number; x: number; y: number; side: Side; isTower: boolean }
   | { type: 'deploy'; x: number; y: number; side: Side; cardId: string }
-  | { type: 'blast'; x: number; y: number; radius: number };
+  | { type: 'blast'; x: number; y: number; radius: number }
+  | { type: 'fire'; sourceId: number; targetId: number; kind: Projectile['kind'] }
+  | { type: 'strike'; sourceId: number; targetId: number } // a melee attack landing
+  | { type: 'wake'; towerId: number };
 
 export class World {
   readonly arena = new Arena();
@@ -246,7 +249,7 @@ export class World {
     } else if (this.phase === 'regulation') {
       this.phase = 'overtime';
       this.timeLeft = MATCH.overtime;
-      for (const t of this.towers) if (t.role === 'nest') t.active = true;
+      for (const t of this.towers) if (t.role === 'nest') this.wake(t);
     } else {
       // Still level after overtime: the side whose weakest tower is healthier wins.
       const weakest = (side: Side) => Math.min(...this.towers.filter((t) => t.side === side && t.alive).map((t) => t.hp / t.maxHp));
@@ -282,7 +285,7 @@ export class World {
       t.targetId = target?.id ?? null;
     }
     if (target && t.cooldown === 0) {
-      this.fire(t.side, t.x, t.y, target.id, t.stats.damage, t.stats.projectileSpeed, 'seed');
+      this.fire(t.side, t.x, t.y, target.id, t.stats.damage, t.stats.projectileSpeed, t.role === 'nest' ? 'honey' : 'seed', undefined, t.id);
       t.cooldown = t.stats.hitSpeed;
     }
   }
@@ -339,9 +342,13 @@ export class World {
         const dmg = s.damage * (!u.struck && s.firstStrikeMult ? s.firstStrikeMult : 1);
         u.struck = true;
         const splash = s.splashRadius ? { radius: s.splashRadius, rule: s.targets } : undefined;
-        if (s.range > 1) this.fire(u.side, u.x, u.y, target.id, dmg, 10, splash ? 'spray' : 'spit', splash);
-        else if (splash) this.blast(u.side, target.x, target.y, dmg, splash);
-        else this.damage(target, dmg);
+        if (s.range > 1) {
+          this.fire(u.side, u.x, u.y, target.id, dmg, 10, splash ? 'spray' : 'spit', splash, u.id);
+        } else {
+          this.events.push({ type: 'strike', sourceId: u.id, targetId: target.id });
+          if (splash) this.blast(u.side, target.x, target.y, dmg, splash);
+          else this.damage(target, dmg);
+        }
         u.cooldown = s.hitSpeed;
       }
       return;
@@ -493,9 +500,10 @@ export class World {
 
   private fire(
     side: Side, x: number, y: number, targetId: number, damage: number, speed: number,
-    kind: Projectile['kind'], splash?: Projectile['splash'],
+    kind: Projectile['kind'], splash?: Projectile['splash'], sourceId = 0,
   ) {
     this.projectiles.push({ id: this.nextId++, side, x, y, prevX: x, prevY: y, targetId, damage, speed, kind, splash });
+    this.events.push({ type: 'fire', sourceId, targetId, kind });
   }
 
   // Area damage: everything the attacker can hit within the radius takes full damage.
@@ -533,20 +541,26 @@ export class World {
   private damage(target: Entity, amount: number) {
     target.hp -= amount;
     this.events.push({ type: 'hit', x: target.x, y: target.y, targetId: target.id });
-    if (target.kind === 'tower' && target.role === 'nest') target.active = true;
+    if (target.kind === 'tower' && target.role === 'nest') this.wake(target);
+  }
+
+  private wake(t: Tower) {
+    if (t.active) return;
+    t.active = true;
+    this.events.push({ type: 'wake', towerId: t.id });
   }
 
   private reap() {
     for (const e of this.entities) {
       if (!e.alive || e.hp > 0) continue;
       e.alive = false;
-      this.events.push({ type: 'death', x: e.x, y: e.y, side: e.side, isTower: e.kind === 'tower' });
+      this.events.push({ type: 'death', id: e.id, x: e.x, y: e.y, side: e.side, isTower: e.kind === 'tower' });
       if (e.kind === 'tower') {
         this.arena.setFootprint(e.id, e.col, e.row, e.stats.size, false);
         if (e.role === 'nest') {
           this.finish(otherSide(e.side));
         } else {
-          if (NEST_WAKES_ON_OUTPOST_LOSS) for (const t of this.towers) if (t.side === e.side && t.role === 'nest') t.active = true;
+          if (NEST_WAKES_ON_OUTPOST_LOSS) for (const t of this.towers) if (t.side === e.side && t.role === 'nest') this.wake(t);
         }
       }
     }

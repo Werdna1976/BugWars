@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { CardDef, KEYWORDS, Keyword, RANGE_LABEL, SPEED_LABEL } from '../data/cards';
+import { iconScale } from './textures';
 
 export const FONT = 'system-ui, -apple-system, Segoe UI, sans-serif';
 
@@ -36,9 +37,8 @@ export function drawCardDetails(
   };
   let y = 0;
 
-  const tex = scene.textures.get(u.id).getSourceImage();
   add(scene.add.rectangle(0, y, 92, 92, 0x3a5230).setOrigin(0, 0).setStrokeStyle(2, 0x1d2a17));
-  add(scene.add.image(46, y + 46, u.id).setScale(Math.min(2.2, 84 / Math.max(tex.width, tex.height))).setRotation(-Math.PI / 2));
+  add(scene.add.image(46, y + 46, u.id).setScale(iconScale(u.id, 84)).setRotation(-Math.PI / 2));
   const name = add(scene.add.text(106, y + 2, card.name, {
     fontFamily: FONT, fontSize: '24px', color: '#ffffff', fontStyle: 'bold', wordWrap: { width: width - 106 },
   }));

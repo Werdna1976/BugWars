@@ -1,11 +1,14 @@
 import Phaser from 'phaser';
 import { COLS, DT, ROWS, Side } from '../sim/constants';
-import { Entity, Result, Unit, World } from '../sim/world';
+import { Entity, Result, Tower, Unit, World } from '../sim/world';
 import { SimpleAi } from '../sim/ai';
 import { HAND_SIZE, NECTAR } from '../sim/player';
 import { CARDS, CardDef } from '../data/cards';
 import { AI_DECK } from '../data/decks';
-import { TILE, bakeTextures } from './textures';
+import { BUG_FRAMES, HI, TILE, bakeTextures, bugScale, iconScale } from './textures';
+import { WALK_FRAMES } from '../art/bugs';
+import { FieldInfo, waterSpots } from '../art/scenery';
+import { sfx } from '../audio/sfx';
 import { FONT, drawCardDetails } from './details';
 import { music } from '../audio/music';
 
@@ -24,10 +27,32 @@ const CARD_GAP = 8;
 const CARD_Y = ARENA_H + 46;
 
 interface UnitView {
-  ring: Phaser.GameObjects.Ellipse;
-  sprite: Phaser.GameObjects.Image;
+  shadow: Phaser.GameObjects.Image;
+  ring: Phaser.GameObjects.Image;
+  sprite: Phaser.GameObjects.Sprite;
   bar: Phaser.GameObjects.Graphics;
+  walk: number; // gait phase, advanced by distance walked
+  lastCooldown: number;
+  strikeT: number; // seconds since the last attack started, Infinity when idle
+  flash: number; // seconds of white hit-flash left
+  lastX: number;
+  lastY: number;
 }
+
+interface TowerView {
+  sprite: Phaser.GameObjects.Image;
+  turret?: Phaser.GameObjects.Sprite;
+  flag: Phaser.GameObjects.Sprite;
+  bar: Phaser.GameObjects.Graphics;
+  bees: Phaser.GameObjects.Sprite[];
+  aim: number;
+  recoil: number;
+  flash: number;
+  zzz: number;
+}
+
+const STRIKE_SECONDS = 0.28;
+const LANES = [3.5, COLS - 3.5];
 
 interface CardView {
   container: Phaser.GameObjects.Container;
@@ -39,17 +64,12 @@ interface CardView {
   cardId: string;
 }
 
-// Display size for a bug: roughly its body diameter, a bit larger so detail reads.
-function spriteScale(scene: Phaser.Scene, key: string, radius: number): number {
-  const tex = scene.textures.get(key).getSourceImage();
-  return (radius * 2 * TILE * 1.45) / Math.max(tex.width * 0.75, 1);
-}
 
 export class BattleScene extends Phaser.Scene {
   private world!: World;
   private acc = 0;
   private unitViews = new Map<number, UnitView>();
-  private towerViews = new Map<number, { sprite: Phaser.GameObjects.Image; bar: Phaser.GameObjects.Graphics }>();
+  private towerViews = new Map<number, TowerView>();
   private projViews = new Map<number, Phaser.GameObjects.Image>();
   private cards: CardView[] = [];
   private nextCard!: { icon: Phaser.GameObjects.Image; cost: Phaser.GameObjects.Text };
@@ -72,14 +92,15 @@ export class BattleScene extends Phaser.Scene {
   private crownText!: Record<Side, Phaser.GameObjects.Text>;
   private announced = new Set<string>();
   private ended = false;
+  private lastTick = -1;
 
   constructor() {
     super('battle');
   }
 
   create() {
-    if (!this.textures.exists('beetle')) bakeTextures(this);
     this.world = new World(Math.floor(Math.random() * 1e9));
+    if (!this.textures.exists('ground')) bakeTextures(this, this.fieldInfo());
     this.ai = new SimpleAi(this.world, 'enemy');
     this.announced.clear();
     this.acc = 0;
@@ -97,14 +118,15 @@ export class BattleScene extends Phaser.Scene {
     // World x = 0 is the left edge of the field; the side panels sit at negative x and past ARENA_W.
     this.cameras.main.setScroll(-SIDE_W, 0);
 
-    this.drawGround();
-    this.drawPuddles();
-    for (const t of this.world.towers) {
-      const sprite = this.add.image(t.x * TILE, t.y * TILE, t.role).setDepth(t.y);
-      const flag = this.add.rectangle(t.x * TILE, (t.y - t.radius) * TILE + 4, 14, 8, SIDE_COLOR[t.side]).setDepth(t.y + 0.1);
-      flag.setStrokeStyle(1, 0x000000, 0.5);
-      this.towerViews.set(t.id, { sprite, bar: this.add.graphics().setDepth(100) });
+    this.add.image(0, 0, 'ground').setOrigin(0, 0).setDepth(-10);
+    this.add.image(0, 0, 'water').setOrigin(0, 0).setDepth(-5);
+    this.animateWater();
+    this.lastTick = -1;
+    if (!this.anims.exists('flag-wave')) {
+      this.anims.create({ key: 'flag-wave', frames: this.anims.generateFrameNames('flag', { start: 0, end: 5 }), frameRate: 9, repeat: -1 });
+      this.anims.create({ key: 'bee-buzz', frames: this.anims.generateFrameNames('bee', { start: 0, end: 1 }), frameRate: 24, repeat: -1 });
     }
+    for (const t of this.world.towers) this.makeTowerView(t);
 
     this.zoneShade = this.add.graphics().setDepth(90).setVisible(false);
     this.zoneKey = '';
@@ -117,7 +139,10 @@ export class BattleScene extends Phaser.Scene {
       fontFamily: FONT, fontSize: '30px', color: '#ffe9a8', fontStyle: 'bold', align: 'center',
       stroke: '#2a1a05', strokeThickness: 6,
     }).setOrigin(0.5).setDepth(450);
-    this.input.once('pointerdown', () => music.start());
+    this.input.once('pointerdown', () => {
+      music.start();
+      sfx.unlock();
+    });
     music.reset();
 
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => this.updateGhost(p));
@@ -127,42 +152,60 @@ export class BattleScene extends Phaser.Scene {
 
   // ---------- Static scenery ----------
 
-  private drawGround() {
-    const g = this.add.graphics().setDepth(-10);
-    g.fillStyle(0x7a5a3a, 1).fillRect(0, 0, ARENA_W, ARENA_H);
-    const rng = new Phaser.Math.RandomDataGenerator(['bugwars']);
-    for (let i = 0; i < 900; i++) {
-      const shade = rng.pick([0x6e5034, 0x86653f, 0x735437, 0x8f6d46]);
-      g.fillStyle(shade, 0.7).fillCircle(rng.between(0, ARENA_W), rng.between(0, ARENA_H), rng.realInRange(1, 3.5));
-    }
-    for (let i = 0; i < 40; i++) {
-      g.fillStyle(rng.pick([0x9b9488, 0xb0a99b, 0x8a8478]), 1)
-        .fillEllipse(rng.between(0, ARENA_W), rng.between(0, ARENA_H), rng.between(4, 9), rng.between(3, 7));
-    }
-    for (let y = 0; y < ARENA_H; y += 10) {
-      for (const x of [rng.between(0, 10), ARENA_W - rng.between(0, 10)]) {
-        g.fillStyle(rng.pick([0x4f8a35, 0x5f9f3f, 0x467a2f]), 1).fillTriangle(x - 4, y + 8, x, y - 6, x + 4, y + 8);
-      }
-    }
-    g.lineStyle(2, 0x5a3f27, 0.4).lineBetween(0, ARENA_H / 2, ARENA_W, ARENA_H / 2);
+  private fieldInfo(): FieldInfo {
+    return {
+      cols: COLS, rows: ROWS, tile: TILE, lanes: LANES,
+      isWet: (c, r) => this.world.arena.isWet(c, r),
+      towers: this.world.towers.map((t) => ({ x: t.x, y: t.y, size: t.stats.size })),
+    };
   }
 
-  private drawPuddles() {
-    const g = this.add.graphics().setDepth(-5);
-    const wet: [number, number][] = [];
-    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (this.world.arena.isWet(c, r)) wet.push([c, r]);
-    const pass = (color: number, alpha: number, radius: number, dy = 0) => {
-      g.fillStyle(color, alpha);
-      for (const [c, r] of wet) g.fillCircle((c + 0.5) * TILE, (r + 0.5) * TILE + dy, radius);
-    };
-    pass(0x4a3524, 1, TILE * 0.78, 2);
-    pass(0x3f7fa8, 1, TILE * 0.68);
-    pass(0x5a9cc4, 1, TILE * 0.5, -2);
-    const rng = new Phaser.Math.RandomDataGenerator(['puddle']);
-    for (let i = 0; i < 14; i++) {
-      const [c, r] = rng.pick(wet);
-      g.lineStyle(1.5, 0xcfe8f5, 0.55).strokeEllipse((c + 0.5) * TILE, (r + 0.5) * TILE, rng.between(10, 22), rng.between(4, 8));
+  // Puddle life: ripples, sun glints and a couple of drifting leaves.
+  private animateWater() {
+    const field = this.fieldInfo();
+    const spots = waterSpots(field, 40, 3);
+    const deep = waterSpots(field, 6, 9, 0.85);
+    this.time.addEvent({
+      delay: 450, loop: true, callback: () => {
+        const [x, y] = spots[Math.floor(Math.random() * spots.length)];
+        const ring = this.add.image(x, y, 'ring').setDepth(-4).setScale(0.05, 0.03).setAlpha(0.55);
+        this.tweens.add({ targets: ring, scaleX: 0.42, scaleY: 0.24, alpha: 0, duration: 1600, ease: 'Sine.Out', onComplete: () => ring.destroy() });
+      },
+    });
+    this.time.addEvent({
+      delay: 260, loop: true, callback: () => {
+        const [x, y] = spots[Math.floor(Math.random() * spots.length)];
+        const g = this.add.image(x, y, 'spark').setDepth(-4).setScale(0).setAlpha(0.85);
+        this.tweens.add({ targets: g, scale: 0.28, duration: 380, yoyo: true, ease: 'Sine.InOut', onComplete: () => g.destroy() });
+      },
+    });
+    deep.slice(0, 2).forEach(([x, y], i) => {
+      const leaf = this.add.image(x, y, i ? 'floatleaf2' : 'floatleaf').setDepth(-4).setScale(1 / HI).setRotation(Math.random() * 6);
+      this.tweens.add({ targets: leaf, x: x + (i ? -14 : 16), y: y + (i ? 5 : -4), rotation: leaf.rotation + (i ? -0.8 : 0.9), duration: 9000 + i * 2500, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    });
+  }
+
+  private makeTowerView(t: Tower) {
+    const x = t.x * TILE;
+    const y = t.y * TILE;
+    const sprite = this.add.image(x, y, `${t.role}_${t.side}`).setScale(1 / HI).setDepth(t.y - t.radius + 0.2);
+    let turret: Phaser.GameObjects.Sprite | undefined;
+    const aim = t.side === 'enemy' ? Math.PI / 2 : -Math.PI / 2;
+    if (t.role === 'outpost') {
+      turret = this.add.sprite(x, y, 'sunflower', '0').setScale(0.62).setRotation(aim).setDepth(t.y + 0.3);
     }
+    const flag = this.add.sprite(x - t.radius * TILE * 0.7, y - t.radius * TILE * 0.95, 'flag')
+      .setOrigin(0.15, 0.95).setScale(1 / HI).setTint(SIDE_COLOR[t.side]).setDepth(t.y + 0.4);
+    flag.play({ key: 'flag-wave', startFrame: Math.floor(Math.random() * 6) });
+    const bees: Phaser.GameObjects.Sprite[] = [];
+    if (t.role === 'nest') {
+      for (let i = 0; i < 5; i++) {
+        const bee = this.add.sprite(x, y, 'bee').setScale(0.6).setDepth(130).setVisible(false);
+        bee.play({ key: 'bee-buzz', startFrame: i % 2 });
+        bees.push(bee);
+      }
+    }
+    this.towerViews.set(t.id, { sprite, turret, flag, bees, bar: this.add.graphics().setDepth(100), aim, recoil: 0, flash: 0, zzz: 1 });
   }
 
   // ---------- Card panel ----------
@@ -199,6 +242,8 @@ export class BattleScene extends Phaser.Scene {
         this.dragging = this.selected !== null;
         this.drawZone();
         this.zoneShade.setVisible(this.selected !== null);
+        sfx.unlock();
+        sfx.play('click');
         this.refreshCards();
       });
       this.cards.push({ container, bg, icon, name, cost, shade, cardId: '' });
@@ -220,7 +265,7 @@ export class BattleScene extends Phaser.Scene {
       const card = CARDS[me.hand[i]];
       if (view.cardId !== card.id) {
         view.cardId = card.id;
-        view.icon.setTexture(card.unit.id).setScale(Math.min(1.6, 64 / this.textures.get(card.unit.id).getSourceImage().width * 1.3));
+        view.icon.setTexture(card.unit.id).setScale(iconScale(card.unit.id, 70)).setRotation(-Math.PI / 2);
         view.name.setText(card.name);
         view.cost.setText(String(card.cost));
       }
@@ -229,7 +274,7 @@ export class BattleScene extends Phaser.Scene {
       view.container.setY(CARD_Y + CARD_H / 2 - (chosen ? 8 : 0));
     });
     const next = CARDS[me.queue[0]];
-    this.nextCard.icon.setTexture(next.unit.id).setScale(Math.min(1, 40 / this.textures.get(next.unit.id).getSourceImage().width * 1.3));
+    this.nextCard.icon.setTexture(next.unit.id).setScale(iconScale(next.unit.id, 46)).setRotation(-Math.PI / 2);
     this.nextCard.cost.setText(`${next.cost} Nectar`);
     const show = this.hovered ?? this.selected;
     if (show !== null) this.showYourCard(show);
@@ -294,6 +339,17 @@ export class BattleScene extends Phaser.Scene {
       music.toggleMute();
       label();
     });
+    const fx = this.add.text(lx + pad + 140, h - 40, '', {
+      fontFamily: FONT, fontSize: '16px', color: '#ffe9a8', backgroundColor: '#2f4226', padding: { x: 10, y: 6 },
+    }).setDepth(302).setInteractive({ useHandCursor: true });
+    const fxLabel = () => fx.setText(sfx.muted ? 'Effects: off' : 'Effects: on');
+    fxLabel();
+    fx.on('pointerdown', (_p: unknown, _x: unknown, _y: unknown, ev: Phaser.Types.Input.EventData) => {
+      ev.stopPropagation();
+      sfx.unlock();
+      sfx.setMuted(!sfx.muted);
+      fxLabel();
+    });
 
     // Right: the AI's deck. Hover a row to read about that bug.
     const rx = ARENA_W;
@@ -308,9 +364,8 @@ export class BattleScene extends Phaser.Scene {
       const card = CARDS[id];
       const row = this.add.rectangle(rx + pad, y, inner, rowH - 4, 0x3a2724).setOrigin(0, 0).setDepth(301)
         .setInteractive({ useHandCursor: true });
-      const tex = this.textures.get(card.unit.id).getSourceImage();
       this.add.image(rx + pad + 22, y + rowH / 2 - 2, card.unit.id)
-        .setScale(Math.min(1, 34 / Math.max(tex.width, tex.height))).setRotation(-Math.PI / 2).setDepth(302);
+        .setScale(iconScale(card.unit.id, 34)).setRotation(-Math.PI / 2).setDepth(302);
       this.add.text(rx + pad + 48, y + 9, card.name + (n > 1 ? ` ×${n}` : ''), {
         fontFamily: FONT, fontSize: '16px', color: '#ffffff',
       }).setDepth(302);
@@ -378,7 +433,7 @@ export class BattleScene extends Phaser.Scene {
       && this.world.players.player.nectar >= card.cost;
     this.ghost
       .setTexture(card.unit.id)
-      .setScale(spriteScale(this, card.unit.id, card.unit.radius))
+      .setScale(bugScale(card.unit.id, card.unit.radius))
       .setRotation(-Math.PI / 2)
       .setPosition(p.worldX, p.worldY)
       .setTint(ok ? 0xffffff : 0xff6666)
@@ -463,7 +518,9 @@ export class BattleScene extends Phaser.Scene {
     const deltaMs = Math.min(this.game.loop.rawDelta, 250);
     if (this.countdown > 0) {
       // Pre-match: the field is frozen so you can read your cards.
+      const before = Math.ceil(this.countdown);
       this.countdown = Math.max(0, this.countdown - deltaMs / 1000);
+      if (Math.ceil(this.countdown) !== before && this.countdown <= 3) sfx.play(this.countdown === 0 ? 'go' : 'tick');
       this.countdownText.setText(this.countdown > 0
         ? `Match starts in ${Math.ceil(this.countdown)}\nHover your cards to read about them`
         : '');
@@ -489,65 +546,226 @@ export class BattleScene extends Phaser.Scene {
     if (this.world.winner && !this.ended) this.showResult(this.world.winner);
   }
 
+  // Pan a sound toward where it happened on the field.
+  private pan(x: number): number {
+    return (x / COLS) * 2 - 1;
+  }
+
   private playEvents() {
-    for (const ev of this.world.drainEvents()) {
-      if (ev.type === 'hit') {
-        const flash = this.add.circle(ev.x * TILE, ev.y * TILE, 6, 0xfff2b0, 0.9).setDepth(150);
-        this.tweens.add({ targets: flash, scale: 2, alpha: 0, duration: 180, onComplete: () => flash.destroy() });
-      } else if (ev.type === 'blast') {
-        // Area damage: a burst sized to the real blast radius, a shock ring, and flying droplets.
-        const x = ev.x * TILE;
-        const y = ev.y * TILE;
-        const r = ev.radius * TILE;
-        const burst = this.add.image(x, y, 'blast').setDepth(155).setScale(0.3).setAlpha(1);
-        this.tweens.add({ targets: burst, scale: (r * 2) / 64, duration: 220, ease: 'Cubic.Out' });
-        this.tweens.add({ targets: burst, alpha: 0, delay: 220, duration: 380, onComplete: () => burst.destroy() });
-        const ring = this.add.circle(x, y, r).setStrokeStyle(4, 0xffd27a, 1).setDepth(156).setScale(0.4);
-        this.tweens.add({ targets: ring, scale: 1.05, duration: 260, ease: 'Cubic.Out' });
-        this.tweens.add({ targets: ring, alpha: 0, delay: 260, duration: 300, onComplete: () => ring.destroy() });
-        for (let i = 0; i < 8; i++) {
-          const a = (i / 8) * Math.PI * 2 + Math.random() * 0.4;
-          const drop = this.add.circle(x, y, 3, 0xff9a2a).setDepth(157);
-          this.tweens.add({
-            targets: drop, x: x + Math.cos(a) * r * 1.1, y: y + Math.sin(a) * r * 1.1, alpha: 0, duration: 450,
-            onComplete: () => drop.destroy(),
-          });
+    const w = this.world;
+    for (const ev of w.drainEvents()) {
+      switch (ev.type) {
+        case 'hit': {
+          const target = w.entities.find((e) => e.id === ev.targetId);
+          const spark = this.add.image(ev.x * TILE + (Math.random() - 0.5) * 8, ev.y * TILE + (Math.random() - 0.5) * 8, 'spark')
+            .setDepth(150).setScale(0.25).setRotation(Math.random() * 3);
+          this.tweens.add({ targets: spark, scale: 0.5, alpha: 0, duration: 200, onComplete: () => spark.destroy() });
+          if (target?.kind === 'tower') {
+            const tv = this.towerViews.get(target.id);
+            if (tv) tv.flash = 0.08;
+            this.chips(ev.x * TILE, ev.y * TILE, target.role === 'nest' ? 'straw' : 'shard', 2, 14);
+            sfx.play('hitTower', { pan: this.pan(ev.x) });
+          } else {
+            const uv = this.unitViews.get(ev.targetId);
+            if (uv) uv.flash = 0.07;
+          }
+          break;
         }
-        this.cameras.main.shake(90, 0.002);
-      } else if (ev.type === 'deploy') {
-        const ring = this.add.circle(ev.x * TILE, ev.y * TILE, TILE * 0.9).setStrokeStyle(3, SIDE_COLOR[ev.side], 0.9).setDepth(150);
-        this.tweens.add({ targets: ring, scale: 0.3, alpha: 0, duration: 900, onComplete: () => ring.destroy() });
-      } else {
-        const n = ev.isTower ? 14 : 6;
-        for (let i = 0; i < n; i++) {
-          const a = (i / n) * Math.PI * 2;
-          const puff = this.add.image(ev.x * TILE, ev.y * TILE, 'puff').setDepth(160).setAlpha(0.9);
-          this.tweens.add({
-            targets: puff,
-            x: puff.x + Math.cos(a) * (ev.isTower ? 50 : 22),
-            y: puff.y + Math.sin(a) * (ev.isTower ? 50 : 22),
-            alpha: 0, scale: ev.isTower ? 2.2 : 1.2, duration: ev.isTower ? 700 : 400,
-            onComplete: () => puff.destroy(),
-          });
+        case 'blast': this.showBlast(ev.x, ev.y, ev.radius); break;
+        case 'deploy': {
+          const x = ev.x * TILE;
+          const y = ev.y * TILE;
+          const ring = this.add.image(x, y, 'ring').setTint(SIDE_COLOR[ev.side]).setDepth(5).setScale(0.6).setAlpha(0.9);
+          this.tweens.add({ targets: ring, scale: 0.15, alpha: 0, duration: 700, ease: 'Cubic.In', onComplete: () => ring.destroy() });
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2;
+            const puff = this.add.image(x, y + 4, 'puff').setDepth(6).setScale(0.25).setAlpha(0.7);
+            this.tweens.add({
+              targets: puff, x: x + Math.cos(a) * 26, y: y + 4 + Math.sin(a) * 14, scale: 0.5, alpha: 0, duration: 520, ease: 'Cubic.Out',
+              onComplete: () => puff.destroy(),
+            });
+          }
+          sfx.play('deploy', { pan: this.pan(ev.x) });
+          break;
+        }
+        case 'fire': {
+          const src = w.entities.find((e) => e.id === ev.sourceId);
+          if (src?.kind === 'tower') {
+            const tv = this.towerViews.get(src.id);
+            if (tv) tv.recoil = 1;
+          }
+          sfx.play(ev.kind, { pan: src ? this.pan(src.x) : 0 });
+          break;
+        }
+        case 'strike': {
+          const src = w.entities.find((e) => e.id === ev.sourceId);
+          sfx.play('bite', { pan: src ? this.pan(src.x) : 0 });
+          break;
+        }
+        case 'wake': {
+          const t = w.entities.find((e) => e.id === ev.towerId);
+          if (t) {
+            const ring = this.add.image(t.x * TILE, t.y * TILE, 'ring').setTint(0xffd060).setDepth(140).setScale(0.6);
+            this.tweens.add({ targets: ring, scale: 3, alpha: 0, duration: 700, onComplete: () => ring.destroy() });
+          }
+          sfx.play('nestWake');
+          break;
+        }
+        case 'death': {
+          if (ev.isTower) this.towerFall(ev.x, ev.y, ev.side);
+          else this.bugDeath(ev.id, ev.x, ev.y);
+          break;
         }
       }
     }
   }
 
+  private chips(x: number, y: number, key: string, n: number, spread: number) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = spread * (0.5 + Math.random());
+      const chip = this.add.image(x, y, key).setDepth(152).setScale(0.35 + Math.random() * 0.25).setRotation(Math.random() * 6);
+      this.tweens.add({
+        targets: chip, x: x + Math.cos(a) * d, y: y + Math.sin(a) * d * 0.6 + 6, rotation: chip.rotation + 3, alpha: 0,
+        duration: 420 + Math.random() * 200, ease: 'Quad.Out', onComplete: () => chip.destroy(),
+      });
+    }
+  }
+
+  // Area damage: a lumpy fireball sized to the real blast radius, a shock ring,
+  // flying droplets and a scorch mark left on the ground.
+  private showBlast(tx: number, ty: number, radius: number) {
+    const x = tx * TILE;
+    const y = ty * TILE;
+    const r = radius * TILE;
+    const full = (r * 2) / (64 * HI);
+    const scorch = this.add.image(x, y, 'shadow').setDepth(-3).setScale((r * 1.6) / 64, (r * 1.2) / 64).setAlpha(0.45);
+    this.tweens.add({ targets: scorch, alpha: 0, delay: 1500, duration: 1500, onComplete: () => scorch.destroy() });
+    const burst = this.add.image(x, y, 'blast').setDepth(155).setScale(full * 0.25).setRotation(Math.random() * 6);
+    this.tweens.add({ targets: burst, scale: full, duration: 200, ease: 'Cubic.Out' });
+    this.tweens.add({ targets: burst, alpha: 0, scale: full * 1.15, delay: 200, duration: 380, onComplete: () => burst.destroy() });
+    const flash = this.add.image(x, y, 'glow').setDepth(156).setScale((r * 1.4) / 32).setAlpha(0.9).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({ targets: flash, alpha: 0, duration: 260, onComplete: () => flash.destroy() });
+    const ring = this.add.image(x, y, 'ring').setTint(0xffd27a).setDepth(156).setScale(full * 0.4);
+    this.tweens.add({ targets: ring, scale: full * 1.1, alpha: 0, duration: 420, ease: 'Cubic.Out', onComplete: () => ring.destroy() });
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 + Math.random() * 0.4;
+      const drop = this.add.image(x, y, 'spray').setDepth(157).setScale(0.3);
+      this.tweens.add({
+        targets: drop, x: x + Math.cos(a) * r * 1.15, y: y + Math.sin(a) * r * 1.15, scale: 0.12, alpha: 0, duration: 480, ease: 'Cubic.Out',
+        onComplete: () => drop.destroy(),
+      });
+    }
+    for (let i = 0; i < 4; i++) {
+      const smoke = this.add.image(x + (Math.random() - 0.5) * r, y + (Math.random() - 0.5) * r, 'puff').setDepth(154).setScale(0.4).setAlpha(0.5).setTint(0x9a8a7a);
+      this.tweens.add({ targets: smoke, y: smoke.y - 18, scale: 0.9, alpha: 0, delay: 150, duration: 900, onComplete: () => smoke.destroy() });
+    }
+    this.cameras.main.shake(110, 0.0025);
+    sfx.play('blast', { pan: this.pan(tx) });
+  }
+
+  // A squashed bug: the sprite flips on its back, darkens and fades, with a splat.
+  private bugDeath(id: number, tx: number, ty: number) {
+    const x = tx * TILE;
+    const y = ty * TILE;
+    const view = this.unitViews.get(id);
+    if (view) {
+      const body = this.add.sprite(view.sprite.x, view.sprite.y, view.sprite.texture.key, view.sprite.frame.name)
+        .setScale(view.sprite.scaleX, -view.sprite.scaleY).setRotation(view.sprite.rotation).setDepth(1).setTint(0x8a7a6a);
+      this.tweens.add({ targets: body, alpha: 0, scaleX: body.scaleX * 0.8, scaleY: body.scaleY * 0.8, rotation: body.rotation + 0.6, delay: 250, duration: 700, onComplete: () => body.destroy() });
+    }
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const puff = this.add.image(x, y, 'puff').setDepth(160).setScale(0.22).setAlpha(0.85);
+      this.tweens.add({
+        targets: puff, x: x + Math.cos(a) * 18, y: y + Math.sin(a) * 12, alpha: 0, scale: 0.45, duration: 380,
+        onComplete: () => puff.destroy(),
+      });
+    }
+    sfx.play('squish', { pan: this.pan(tx) });
+  }
+
+  private towerFall(tx: number, ty: number, side: Side) {
+    const x = tx * TILE;
+    const y = ty * TILE;
+    const t = this.world.towers.find((o) => !o.alive && o.x === tx && o.y === ty);
+    const nest = t?.role === 'nest';
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const puff = this.add.image(x, y, 'puff').setDepth(160).setAlpha(0.95).setScale(0.6).setTint(nest ? 0xe8d098 : 0xd8b8a0);
+      this.tweens.add({
+        targets: puff, x: x + Math.cos(a) * 70, y: y + Math.sin(a) * 50, alpha: 0, scale: 1.6, duration: 900, ease: 'Cubic.Out',
+        onComplete: () => puff.destroy(),
+      });
+    }
+    this.chips(x, y, nest ? 'straw' : 'shard', 18, 70);
+    const ring = this.add.image(x, y, 'ring').setTint(SIDE_COLOR[side]).setDepth(158).setScale(0.8);
+    this.tweens.add({ targets: ring, scale: 4, alpha: 0, duration: 800, ease: 'Cubic.Out', onComplete: () => ring.destroy() });
+    this.cameras.main.shake(320, 0.007);
+    sfx.play('towerFall', { pan: this.pan(tx) });
+  }
+
   private render(alpha: number) {
     const lerp = (a: number, b: number) => a + (b - a) * alpha;
+    const dt = Math.min(this.game.loop.rawDelta, 100) / 1000;
     const seen = new Set<number>();
+    const now = this.time.now / 1000;
 
     for (const t of this.world.towers) {
       const view = this.towerViews.get(t.id)!;
       view.bar.clear();
       if (!t.alive) {
-        if (view.sprite.texture.key !== 'rubble') view.sprite.setTexture('rubble').setScale(t.stats.size / 3);
+        const key = `rubble_${t.role}`;
+        if (view.sprite.texture.key !== key) {
+          view.sprite.setTexture(key).setDepth(-2);
+          view.turret?.destroy();
+          view.turret = undefined;
+          view.flag.setVisible(false);
+          for (const b of view.bees) b.setVisible(false);
+        }
         continue;
       }
       this.drawBar(view.bar, t, t.x * TILE, (t.y - t.radius) * TILE - 6, t.stats.size * TILE * 0.8);
-      if (t.role === 'nest' && !t.active) view.sprite.setTint(0xbbbbbb);
+      view.flash = Math.max(0, view.flash - dt);
+      const asleep = t.role === 'nest' && !t.active;
+      if (view.flash > 0) view.sprite.setTintFill(0xffffff);
+      else if (asleep) view.sprite.setTint(0xb8b0a0);
       else view.sprite.clearTint();
+      // Sunflower turret swings toward its target and kicks back when it fires.
+      if (view.turret) {
+        const target = this.world.byId(t.targetId);
+        if (target) {
+          const want = Math.atan2(target.y - t.y, target.x - t.x);
+          const diff = Phaser.Math.Angle.Wrap(want - view.aim);
+          view.aim += diff * Math.min(1, dt * 10);
+        }
+        view.recoil = Math.max(0, view.recoil - dt * 5);
+        view.turret.setRotation(view.aim).setFrame(view.recoil > 0.5 ? '1' : '0')
+          .setScale(0.62 * (1 - view.recoil * 0.06))
+          .setPosition(t.x * TILE - Math.cos(view.aim) * view.recoil * 3, t.y * TILE - Math.sin(view.aim) * view.recoil * 3);
+        if (view.flash > 0) view.turret.setTintFill(0xffffff);
+        else view.turret.clearTint();
+      }
+      // Bees circle an awake Nest; a sleeping one snores.
+      view.bees.forEach((bee, i) => {
+        bee.setVisible(!asleep);
+        if (asleep) return;
+        const a = now * (1.2 + i * 0.17) + i * 1.3;
+        const rx = TILE * (1.6 + (i % 3) * 0.35);
+        const bx = t.x * TILE + Math.cos(a) * rx;
+        const by = t.y * TILE + Math.sin(a) * rx * 0.75;
+        bee.setPosition(bx, by).setRotation(a + Math.PI / 2);
+      });
+      if (asleep) {
+        view.zzz -= dt;
+        if (view.zzz <= 0) {
+          view.zzz = 1.3;
+          const z = this.add.text(t.x * TILE + 18, t.y * TILE - 20, 'z', {
+            fontFamily: FONT, fontSize: '18px', color: '#fff6d8', fontStyle: 'bold', stroke: '#3a2a10', strokeThickness: 3,
+          }).setDepth(135);
+          this.tweens.add({ targets: z, x: z.x + 16, y: z.y - 30, alpha: 0, scale: 1.5, duration: 1600, onComplete: () => z.destroy() });
+        }
+      }
     }
 
     for (const u of this.world.units) {
@@ -555,39 +773,69 @@ export class BattleScene extends Phaser.Scene {
       const view = this.unitViews.get(u.id) ?? this.makeUnitView(u);
       const x = lerp(u.prevX, u.x) * TILE;
       const y = lerp(u.prevY, u.y) * TILE;
-      const lift = u.flying ? 10 + Math.sin((this.world.tick + u.id * 7) * 0.3) * 2 : 0;
-      // Limited animation: a wobble while walking, a lunge on each attack.
-      const phase = this.world.tick + u.id;
-      const moving = !u.attacking && u.deploying <= 0;
-      const wobble = moving ? Math.sin(phase * 0.8) * 0.12 : 0;
-      const lunge = u.attacking && u.cooldown > u.stats.hitSpeed - 0.15 ? 4 : 0;
-      view.ring.setPosition(x, y + (u.flying ? 6 : 2)).setDepth(y / TILE - 0.01);
+      const lift = u.flying ? 12 + Math.sin(now * 3 + u.id) * 2.5 : 0;
+      // Walk frames advance with distance covered, so legs never skate; flyers beat their wings constantly.
+      const moved = Math.hypot(x - view.lastX, y - view.lastY) / TILE;
+      view.lastX = x;
+      view.lastY = y;
+      if (u.flying) view.walk = (view.walk + dt * 7) % 1;
+      else view.walk = (view.walk + moved / (u.radius * 2.4)) % 1;
+      // A fresh attack restarts the strike animation.
+      if (u.cooldown > view.lastCooldown + 0.01 && u.attacking) view.strikeT = 0;
+      view.lastCooldown = u.cooldown;
+      view.strikeT += dt;
+      let frame = Math.floor(view.walk * WALK_FRAMES) % WALK_FRAMES;
+      if (!u.flying && moved < 0.001) frame = 0;
+      if (view.strikeT < STRIKE_SECONDS) frame = WALK_FRAMES + Math.min(BUG_FRAMES - WALK_FRAMES - 1, Math.floor((view.strikeT / STRIKE_SECONDS) * (BUG_FRAMES - WALK_FRAMES)));
+      const lunge = view.strikeT < STRIKE_SECONDS ? Math.sin((view.strikeT / STRIKE_SECONDS) * Math.PI) * 3 : 0;
+      const scale = bugScale(u.stats.id, u.radius);
+      // Freshly deployed bugs drop in from above.
+      const drop = u.deploying > 0 ? u.deploying : 0;
+      const depth = u.flying ? 120 + y / TILE : y / TILE;
+      view.shadow.setPosition(x + (u.flying ? 6 : 1.5), y + (u.flying ? 9 : 2.5))
+        .setScale((u.radius * 2.4 * TILE) / 64 * (u.flying ? 0.8 : 1), (u.radius * 1.7 * TILE) / 64 * (u.flying ? 0.8 : 1))
+        .setAlpha(u.flying ? 0.35 : 0.5).setDepth(u.flying ? 60 : depth - 0.02);
+      view.ring.setPosition(x, y + (u.flying ? 0 : 1)).setDepth(u.flying ? 61 : depth - 0.01).setAlpha(u.deploying > 0 ? 0.3 : 0.75);
+      view.flash = Math.max(0, view.flash - dt);
       view.sprite
-        .setPosition(x + Math.cos(u.facing) * lunge, y - lift + Math.sin(u.facing) * lunge)
-        .setRotation(u.facing + wobble)
-        .setAlpha(u.deploying > 0 ? 0.55 : 1)
-        .setDepth(u.flying ? 120 + y / TILE : y / TILE);
+        .setFrame(String(frame))
+        .setPosition(x + Math.cos(u.facing) * lunge, y - lift - drop * 26 + Math.sin(u.facing) * lunge)
+        .setRotation(u.facing)
+        .setScale(scale * (1 + drop * 0.35))
+        .setAlpha(u.deploying > 0 ? 1 - drop * 0.6 : 1)
+        .setDepth(depth);
+      if (view.flash > 0) view.sprite.setTintFill(0xffffff);
+      else view.sprite.clearTint();
       view.bar.clear();
-      this.drawBar(view.bar, u, x, y - lift - u.radius * TILE - 10, Math.max(22, u.radius * TILE * 1.6));
+      this.drawBar(view.bar, u, x, y - lift - u.radius * TILE * 1.3 - 8, Math.max(22, u.radius * TILE * 1.6));
     }
     for (const [id, view] of this.unitViews) {
       if (seen.has(id)) continue;
       view.ring.destroy();
+      view.shadow.destroy();
       view.sprite.destroy();
       view.bar.destroy();
       this.unitViews.delete(id);
     }
 
     const live = new Set<number>();
+    const tick = this.world.tick;
     for (const p of this.world.projectiles) {
       live.add(p.id);
       let img = this.projViews.get(p.id);
       if (!img) {
-        img = this.add.image(0, 0, p.kind).setDepth(140);
+        img = this.add.image(0, 0, p.kind).setDepth(140).setScale(p.kind === 'seed' ? 0.75 : 0.6);
         this.projViews.set(p.id, img);
       }
-      img.setPosition(lerp(p.prevX, p.x) * TILE, lerp(p.prevY, p.y) * TILE);
+      const px = lerp(p.prevX, p.x) * TILE;
+      const py = lerp(p.prevY, p.y) * TILE;
+      img.setPosition(px, py).setRotation(Math.atan2(p.y - p.prevY, p.x - p.prevX));
+      if (p.kind !== 'seed' && tick !== this.lastTick) {
+        const trail = this.add.image(px, py, p.kind).setDepth(139).setScale(0.35).setAlpha(0.5);
+        this.tweens.add({ targets: trail, scale: 0.1, alpha: 0, duration: 220, onComplete: () => trail.destroy() });
+      }
     }
+    this.lastTick = tick;
     for (const [id, img] of this.projViews) {
       if (!live.has(id)) {
         img.destroy();
@@ -597,10 +845,14 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private makeUnitView(u: Unit): UnitView {
-    const d = u.radius * 2 * TILE;
-    const ring = this.add.ellipse(0, 0, d * 1.05, d * 0.6, SIDE_COLOR[u.side], u.flying ? 0.25 : 0.55);
-    const sprite = this.add.image(0, 0, u.stats.id).setScale(spriteScale(this, u.stats.id, u.radius));
-    const view = { ring, sprite, bar: this.add.graphics().setDepth(130) };
+    const shadow = this.add.image(0, 0, 'shadow');
+    const ring = this.add.image(0, 0, 'ring').setTint(SIDE_COLOR[u.side])
+      .setScale((u.radius * 2.5 * TILE) / (64 * HI), (u.radius * 1.75 * TILE) / (64 * HI));
+    const sprite = this.add.sprite(0, 0, `${u.stats.id}_anim`, '0');
+    const view: UnitView = {
+      shadow, ring, sprite, bar: this.add.graphics().setDepth(130),
+      walk: Math.random(), lastCooldown: 0, strikeT: Infinity, flash: 0, lastX: u.x * TILE, lastY: u.y * TILE,
+    };
     this.unitViews.set(u.id, view);
     return view;
   }
@@ -608,8 +860,10 @@ export class BattleScene extends Phaser.Scene {
   private drawBar(g: Phaser.GameObjects.Graphics, e: Entity, cx: number, y: number, w: number) {
     if (e.hp >= e.maxHp && e.kind === 'unit') return;
     const pct = Math.max(0, e.hp / e.maxHp);
-    g.fillStyle(0x000000, 0.6).fillRect(cx - w / 2 - 1, y - 1, w + 2, 7);
-    g.fillStyle(SIDE_COLOR[e.side], 1).fillRect(cx - w / 2, y, w * pct, 5);
+    const h = e.kind === 'tower' ? 7 : 5;
+    g.fillStyle(0x000000, 0.65).fillRoundedRect(cx - w / 2 - 2, y - 2, w + 4, h + 4, 3);
+    g.fillStyle(SIDE_COLOR[e.side], 1).fillRoundedRect(cx - w / 2, y, Math.max(2, w * pct), h, 2);
+    g.fillStyle(0xffffff, 0.25).fillRect(cx - w / 2 + 1, y + 1, Math.max(0, w * pct - 2), 1.5);
   }
 
   private showResult(result: Result) {
@@ -619,6 +873,7 @@ export class BattleScene extends Phaser.Scene {
     this.selected = null;
     music.setIntense(false);
     const won = result === 'player';
+    sfx.play(won ? 'victory' : 'defeat');
     const w = this.world;
     this.add.rectangle(ARENA_W / 2, ARENA_H / 2, ARENA_W, 180, 0x000000, 0.65).setDepth(400);
     this.add.text(ARENA_W / 2, ARENA_H / 2 - 44, result === 'draw' ? 'Draw' : won ? 'Victory!' : 'Defeat', {
